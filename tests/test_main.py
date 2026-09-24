@@ -3,6 +3,7 @@ import unittest
 from types import ModuleType
 from unittest.mock import patch
 
+import main
 from main import MAX_SLEEP_MINUTES, StrixTrayPystray, validate_sleep_minutes
 
 
@@ -348,6 +349,190 @@ class PystrayPollingTests(unittest.TestCase):
         quit_item.action()
         self.assertEqual(quit_calls, ["quit"])
         self.assertEqual(tray.icon.stop_count, 0)
+
+
+class FakeSignalController:
+    def __init__(self, previous_handler=None, events=None, sigint=2):
+        self.previous_handler = previous_handler
+        self.events = events if events is not None else []
+        self.SIGINT = sigint
+        self.getsignal_calls = []
+        self.registrations = []
+
+    def getsignal(self, signum):
+        self.getsignal_calls.append(signum)
+        return self.previous_handler
+
+    def signal(self, signum, handler):
+        action = "install" if not self.registrations else "restore"
+        self.events.append(action)
+        self.registrations.append((signum, handler))
+
+
+class FakeQtApp:
+    def __init__(self, result=0, error=None, events=None):
+        self.result = result
+        self.error = error
+        self.events = events if events is not None else []
+        self.exec_count = 0
+        self.quit_count = 0
+        self.exec_active = False
+        self.quit_exec_active_states = []
+        self.on_exec = None
+        self.timer = None
+        self.drain_timer = False
+
+    def exec(self):
+        self.exec_count += 1
+        self.events.append("exec")
+        self.exec_active = True
+        try:
+            if self.on_exec is not None:
+                self.on_exec()
+            if self.drain_timer:
+                for _, callback in list(self.timer.scheduled):
+                    callback()
+            if self.error is not None:
+                raise self.error
+            return self.result
+        finally:
+            self.exec_active = False
+
+    def quit(self):
+        self.quit_count += 1
+        self.quit_exec_active_states.append(self.exec_active)
+
+
+class FakeQtTimer:
+    def __init__(self):
+        self.scheduled = []
+
+    def singleShot(self, delay, callback):
+        self.scheduled.append((delay, callback))
+
+
+class QtSignalShutdownTests(unittest.TestCase):
+    def run_app(self, app, timer, signal_module):
+        run_app = getattr(main, "_run_qt_app_with_sigint_shutdown", None)
+        self.assertIsNotNone(run_app, "Qt SIGINT lifecycle helper is missing")
+        with patch("main.signal", signal_module):
+            return run_app(app, timer)
+
+    def run_app_with_setup(self, app, timer, signal_module, before_exec):
+        run_app = getattr(main, "_run_qt_app_with_sigint_shutdown", None)
+        self.assertIsNotNone(run_app, "Qt SIGINT lifecycle helper is missing")
+        with patch("main.signal", signal_module):
+            try:
+                return run_app(app, timer, before_exec)
+            except TypeError as exc:
+                self.fail(f"Qt startup callback is unsupported: {exc}")
+
+    def previous_sigint_handler(self, signum, frame):
+        pass
+
+    def assert_previous_handler_restored(self, signal_module, previous_handler):
+        self.assertEqual(signal_module.getsignal_calls, [signal_module.SIGINT])
+        self.assertEqual(len(signal_module.registrations), 2)
+        install_signum, install_handler = signal_module.registrations[0]
+        restore_signum, restore_handler = signal_module.registrations[1]
+        self.assertEqual(install_signum, signal_module.SIGINT)
+        self.assertTrue(callable(install_handler))
+        self.assertEqual(restore_signum, signal_module.SIGINT)
+        self.assertIs(restore_handler, previous_handler)
+
+    def test_sigint_handler_defers_app_quit(self):
+        app = FakeQtApp()
+        timer = FakeQtTimer()
+        previous_handler = self.previous_sigint_handler
+        signal_module = FakeSignalController(previous_handler)
+
+        def deliver_sigint():
+            handler = signal_module.registrations[0][1]
+            handler(signal_module.SIGINT, None)
+
+        app.on_exec = deliver_sigint
+        app.timer = timer
+        app.drain_timer = True
+
+        result = self.run_app(app, timer, signal_module)
+
+        self.assertEqual(app.quit_count, 1)
+        self.assertEqual(app.quit_exec_active_states, [True])
+        self.assertEqual(len(timer.scheduled), 1)
+        delay, _ = timer.scheduled[0]
+        self.assertEqual(delay, 0)
+        self.assertEqual(result, 0)
+        self.assert_previous_handler_restored(signal_module, previous_handler)
+
+    def test_startup_callback_runs_after_sigint_handler_is_installed(self):
+        order = []
+        app = FakeQtApp(events=order)
+        timer = FakeQtTimer()
+        previous_handler = self.previous_sigint_handler
+        signal_module = FakeSignalController(previous_handler, events=order)
+
+        def before_exec():
+            order.append("setup")
+            handler = signal_module.registrations[0][1]
+            handler(signal_module.SIGINT, None)
+            order.append("setup_done")
+
+        self.run_app_with_setup(app, timer, signal_module, before_exec)
+
+        self.assertEqual(order, ["install", "setup", "setup_done", "exec", "restore"])
+        self.assertEqual([delay for delay, _ in timer.scheduled], [0])
+        for _, callback in timer.scheduled:
+            callback()
+        self.assertEqual(app.quit_count, 1)
+        self.assert_previous_handler_restored(signal_module, previous_handler)
+
+    def test_sigint_handler_is_installed_before_event_loop(self):
+        order = []
+        app = FakeQtApp(events=order)
+        timer = FakeQtTimer()
+        signal_module = FakeSignalController(events=order)
+
+        self.run_app(app, timer, signal_module)
+
+        self.assertEqual(order, ["install", "exec", "restore"])
+
+    def test_repeated_sigint_requests_schedule_safe_quits(self):
+        app = FakeQtApp()
+        timer = FakeQtTimer()
+        signal_module = FakeSignalController(self.previous_sigint_handler)
+
+        self.run_app(app, timer, signal_module)
+
+        handler = signal_module.registrations[0][1]
+        handler(signal_module.SIGINT, None)
+        handler(signal_module.SIGINT, None)
+
+        self.assertEqual([delay for delay, _ in timer.scheduled], [0, 0])
+        for _, callback in timer.scheduled:
+            callback()
+        self.assertEqual(app.quit_count, 2)
+
+    def test_event_loop_error_restores_previous_sigint_handler(self):
+        previous_handler = self.previous_sigint_handler
+        app = FakeQtApp(error=RuntimeError("event loop failed"))
+        timer = FakeQtTimer()
+        signal_module = FakeSignalController(previous_handler)
+
+        with self.assertRaisesRegex(RuntimeError, "event loop failed"):
+            self.run_app(app, timer, signal_module)
+
+        self.assert_previous_handler_restored(signal_module, previous_handler)
+
+    def test_normal_exit_returns_event_loop_code_and_restores_handler(self):
+        previous_handler = self.previous_sigint_handler
+        app = FakeQtApp(result=17)
+        timer = FakeQtTimer()
+        signal_module = FakeSignalController(previous_handler)
+
+        result = self.run_app(app, timer, signal_module)
+
+        self.assertEqual(result, 17)
+        self.assert_previous_handler_restored(signal_module, previous_handler)
 
 
 if __name__ == "__main__":

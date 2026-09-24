@@ -5,6 +5,7 @@ import glob
 import importlib.util
 import json
 import os
+import signal
 import struct
 import subprocess
 import sys
@@ -259,6 +260,21 @@ def pil_to_qpixmap(pil_img):
     return QPixmap.fromImage(qimg)
 
 
+def _run_qt_app_with_sigint_shutdown(app, timer, before_exec=None):
+    previous_sigint_handler = signal.getsignal(signal.SIGINT)
+
+    def request_quit(signum, frame):
+        timer.singleShot(0, app.quit)
+
+    signal.signal(signal.SIGINT, request_quit)
+    try:
+        if before_exec is not None:
+            before_exec()
+        return app.exec()
+    finally:
+        signal.signal(signal.SIGINT, previous_sigint_handler)
+
+
 def run_pyqt_tray(device: StrixDevice):
     """Run a native Qt6 tray application through Linux DBus/StatusNotifierItem."""
     from PyQt6.QtCore import QTimer
@@ -331,15 +347,17 @@ def run_pyqt_tray(device: StrixDevice):
         tray.setIcon(QIcon(qpix))
         tray.setToolTip(tooltip)
 
-    update_state()
-    tray.show()
+    refresh_timer = QTimer()
 
-    # Her 15 saniyede bir otomatik sorgula
-    timer = QTimer()
-    timer.timeout.connect(update_state)
-    timer.start(15000)
+    def initialize_tray():
+        update_state()
+        tray.show()
 
-    sys.exit(app.exec())
+        # Her 15 saniyede bir otomatik sorgula
+        refresh_timer.timeout.connect(update_state)
+        refresh_timer.start(15000)
+
+    sys.exit(_run_qt_app_with_sigint_shutdown(app, QTimer, initialize_tray))
 
 
 class StrixTrayPystray:
