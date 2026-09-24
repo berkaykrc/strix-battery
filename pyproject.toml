@@ -1,0 +1,25 @@
+[project]
+name = "strix-battery"
+version = "0.1.0"
+description = "Linux battery and sleep manager for the ASUS ROG Strix Go 2.4 headset"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pillow>=12.3.0",
+    "pyqt6>=6.11.0",
+]
+
+[project.scripts]
+strix-battery = "main:main"
+
+[project.optional-dependencies]
+fallback-tray = [
+    "pystray>=0.19.5",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["main"]
