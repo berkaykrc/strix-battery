@@ -10,8 +10,93 @@ from main import (
     NOTIFY_TIMEOUT_SECONDS,
     StrixDevice,
     StrixTrayPystray,
+    mv_to_percent,
     validate_sleep_minutes,
 )
+
+
+class MvToPercentTests(unittest.TestCase):
+    """The percentage curve is the input to every displayed battery number."""
+
+    def test_clamps_to_the_discharge_endpoints(self):
+        self.assertEqual(mv_to_percent(3300), 0)
+        self.assertEqual(mv_to_percent(4150), 100)
+        self.assertEqual(mv_to_percent(3200), 0)
+        self.assertEqual(mv_to_percent(4200), 100)
+
+    def test_is_monotonic_across_the_whole_range(self):
+        previous = -1
+        for mv in range(3200, 4200, 5):
+            current = mv_to_percent(mv)
+            self.assertGreaterEqual(current, previous, f"regressed at {mv}mV")
+            previous = current
+
+    def test_stays_within_bounds_for_garbage_input(self):
+        self.assertEqual(mv_to_percent(0), 0)
+        self.assertEqual(mv_to_percent(65535), 100)
+
+
+class PercentageStabilityTests(unittest.TestCase):
+    """A noisy voltage must not make the tray icon strobe."""
+
+    def test_the_first_read_is_reported_unchanged(self):
+        device = StrixDevice()
+        self.assertEqual(device.stabilize_percentage(70), 70)
+
+    def test_jitter_smaller_than_the_deadband_holds_the_reported_value(self):
+        device = StrixDevice()
+        device.stabilize_percentage(70)
+        for noisy in (70, 71, 69, 70, 71, 69):
+            self.assertEqual(
+                device.stabilize_percentage(noisy),
+                70,
+                f"{noisy}% is inside the deadband and must not move the display",
+            )
+
+    def test_a_move_at_the_deadband_is_reported(self):
+        device = StrixDevice()
+        device.stabilize_percentage(70)
+        self.assertEqual(device.stabilize_percentage(72), 72)
+
+    def test_jitter_around_the_new_value_is_held_at_the_new_value(self):
+        device = StrixDevice()
+        device.stabilize_percentage(70)
+        device.stabilize_percentage(72)
+        for noisy in (71, 72, 73, 72):
+            self.assertEqual(device.stabilize_percentage(noisy), 72)
+
+    def test_going_offline_clears_the_hold(self):
+        device = StrixDevice()
+        device.stabilize_percentage(70)
+        with patch("main.glob.glob", return_value=[]):
+            self.assertIsNone(device.query())
+        # 69 would have been held at 70 had the hold survived the disconnect.
+        self.assertEqual(device.stabilize_percentage(69), 69)
+
+    def test_low_battery_notifies_exactly_once_across_the_latch_band(self):
+        device = StrixDevice()
+        with patch.object(device, "notify") as notify:
+            for pct in (15, 14, 16, 15, 18, 20):
+                device._update_low_battery_notice(pct, False)
+        self.assertEqual(notify.call_count, 1)
+
+    def test_low_battery_rearms_above_the_upper_hysteresis_point(self):
+        device = StrixDevice()
+        with patch.object(device, "notify") as notify:
+            for pct in (15, 14, 15):
+                device._update_low_battery_notice(pct, False)
+            self.assertEqual(notify.call_count, 1)
+            device._update_low_battery_notice(21, False)
+            for pct in (15, 14):
+                device._update_low_battery_notice(pct, False)
+        self.assertEqual(notify.call_count, 2)
+
+    def test_low_battery_does_not_notify_while_charging(self):
+        device = StrixDevice()
+        with patch.object(device, "notify") as notify:
+            for pct in (15, 12, 10, 8):
+                device._update_low_battery_notice(pct, True)
+        notify.assert_not_called()
 
 
 class NotifyTests(unittest.TestCase):

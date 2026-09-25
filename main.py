@@ -24,6 +24,17 @@ MAX_SLEEP_MINUTES = 1092
 # would freeze the event loop with no way out. Bound the wait.
 NOTIFY_TIMEOUT_SECONDS = 3
 
+# Voltage readings wobble by a few millivolts between polls and `mv_to_percent`
+# is a step function, so reporting the raw value makes the tray icon flicker.
+# Only report a new percentage once it has genuinely moved. Raising this to 3
+# calms the icon further at the cost of coarser steps.
+BATTERY_DISPLAY_DEADBAND_PERCENT = 2
+
+# Notify at 15% or below, but only re-arm for a fresh alert above 20%, so a
+# battery resting in between does not notify on every poll.
+LOW_BATTERY_NOTIFY_PERCENT = 15
+LOW_BATTERY_REARM_PERCENT = 20
+
 # 64-byte status query packet
 QUERY_PACKET = bytearray([
     0xFF, 0x08, 0x00, 0xFD, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x01
@@ -59,6 +70,46 @@ class StrixDevice:
     def __init__(self):
         self.last_status = None
         self.notified_low = False
+        self._displayed_percentage = None
+
+    def stabilize_percentage(self, percentage: int) -> int:
+        """Hold the last reported percentage until it genuinely moves.
+
+        The hold only suppresses changes smaller than the deadband. A real
+        discharge produces a much larger step and is reported immediately, so
+        this costs no accuracy while removing the flicker that plain
+        millivolt noise causes.
+        """
+        if (
+            self._displayed_percentage is None
+            or abs(percentage - self._displayed_percentage)
+            >= BATTERY_DISPLAY_DEADBAND_PERCENT
+        ):
+            self._displayed_percentage = percentage
+        return self._displayed_percentage
+
+    def _go_offline(self):
+        """Record that no headset answered and drop the display hold."""
+        self.last_status = None
+        self._displayed_percentage = None
+
+    def _update_low_battery_notice(self, percentage: int, charging: bool) -> bool:
+        """Notify once when critically low; return the new latch state.
+
+        Split out from `query` so the 15% trigger and the 20% re-arm point can
+        be tested without hardware, and so the latch logic is readable on its
+        own.
+        """
+        if (
+            percentage <= LOW_BATTERY_NOTIFY_PERCENT
+            and not charging
+            and not self.notified_low
+        ):
+            self.notify("ROG Strix Go 2.4", f"Battery critically low: {percentage}%!")
+            self.notified_low = True
+        elif percentage > LOW_BATTERY_REARM_PERCENT:
+            self.notified_low = False
+        return self.notified_low
 
     def find_node(self):
         """Find the ASUS ROG Strix Go device and return its file descriptor."""
@@ -84,7 +135,7 @@ class StrixDevice:
         """Read the headset battery, voltage, charging, and sleep timer status."""
         fd, path = self.find_node()
         if fd is None:
-            self.last_status = None
+            self._go_offline()
             return None
 
         try:
@@ -98,11 +149,11 @@ class StrixDevice:
 
             # A powered-off or disconnected headset returns zeroed bytes.
             if buf[1] != 0x1B:
-                self.last_status = None
+                self._go_offline()
                 return None
 
             voltage_mv = (buf[12] << 8) | buf[11]
-            pct = mv_to_percent(voltage_mv)
+            pct = self.stabilize_percentage(mv_to_percent(voltage_mv))
             charging = (buf[9] == 0x0A)
             sleep_sec = (buf[22] << 8) | buf[21]
 
@@ -115,16 +166,11 @@ class StrixDevice:
             }
             self.last_status = status
 
-            # Notify once when the battery reaches a critical level (15% or less).
-            if pct <= 15 and not charging and not self.notified_low:
-                self.notify("ROG Strix Go 2.4", f"Battery critically low: {pct}%!")
-                self.notified_low = True
-            elif pct > 20:
-                self.notified_low = False
+            self._update_low_battery_notice(pct, charging)
 
             return status
         except OSError:
-            self.last_status = None
+            self._go_offline()
             return None
         finally:
             os.close(fd)
