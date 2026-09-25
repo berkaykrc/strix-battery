@@ -9,6 +9,7 @@ import main
 from main import (
     ERROR_OFFLINE,
     ERROR_PERMISSION,
+    HEADSET_ICON,
     HIDIOCGFEATURE_64,
     HIDIOCGRAWINFO,
     MAX_SLEEP_MINUTES,
@@ -243,8 +244,65 @@ class LastErrorTests(unittest.TestCase):
         self.assertEqual(offline_message(None), "Headset: Offline / Out of range")
 
 
-class FakeQApplication:
-    """Just enough QApplication for the tray-availability guard."""
+class PermissionHintTests(unittest.TestCase):
+    """A denied node is a hint, never the verdict: plenty of hosts have one.
+
+    This host has root:root 0660 hidraw nodes for built-in laptop HID, and the
+    README udev rule only matches 0b05:18d6/18d7, so those nodes are denied even
+    when the rule is installed. An unplugged dongle must therefore still read as
+    offline rather than as a missing permission fix.
+    """
+
+    def test_the_permission_hint_does_not_replace_the_offline_diagnosis(self):
+        message = offline_message(ERROR_PERMISSION).lower()
+        self.assertIn("offline", message)
+        self.assertIn("permission", message)
+
+    def test_denied_nodes_plus_a_missing_dongle_still_reads_as_offline_first(self):
+        device = StrixDevice()
+        with patch("main.glob.glob", return_value=["/dev/hidraw0", "/dev/hidraw1"]), patch(
+            "main.os.open", side_effect=PermissionError(13, "Permission denied")
+        ):
+            self.assertIsNone(device.query())
+        self.assertEqual(device.last_error, ERROR_PERMISSION)
+        message = offline_message(device.last_error).lower()
+        self.assertIn("offline", message)
+        self.assertIn("permission", message)
+
+
+class _PermissiveType(type):
+    """Lets the fake classes answer class-level attribute access.
+
+    `pil_to_qpixmap` does `QImage.Format.Format_RGBA8888`, which is a lookup on
+    the class, not an instance, so instance `__getattr__` cannot help.
+    """
+
+    def __getattr__(cls, name):
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        return FakeQtWidget()
+
+
+class FakeQtWidget(metaclass=_PermissiveType):
+    """Accepts any constructor arguments and tolerates any method call.
+
+    Used with `permissive=True` so `run_pyqt_tray` can be driven all the way
+    into `update_state`, which the strict bare-`type()` fakes cannot reach:
+    they die on `QAction("...", menu)`.
+    """
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __call__(self, *args, **kwargs):
+        return FakeQtWidget()
+
+    def __getattr__(self, name):
+        return FakeQtWidget()
+
+
+class FakeQApplication(FakeQtWidget):
+    """Just enough QApplication for the guard and for `update_state` to run."""
 
     _instance = None
 
@@ -258,24 +316,76 @@ class FakeQApplication:
     def setQuitOnLastWindowClosed(value):
         pass
 
+    def exec(self):
+        return 0
 
-def install_fake_pyqt6(testcase, tray_available):
-    """Point every `from PyQt6...` import in `main` at in-memory fakes."""
+
+class RecordingAction(FakeQtWidget):
+    """Records `setText` so the tray menu item's label can be asserted."""
+
+    instances = []
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        RecordingAction.instances.append(self)
+        self.text = None
+
+    def setText(self, text):
+        self.text = text
+
+
+class RecordingTrayIcon(FakeQtWidget):
+    """A tray icon that records the tooltip the user would actually see."""
+
+    tray_available = False
+    instances = []
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        RecordingTrayIcon.instances.append(self)
+        self.tooltip = None
+        self.shown = False
+
+    @classmethod
+    def isSystemTrayAvailable(cls):
+        return cls.tray_available
+
+    def setToolTip(self, tooltip):
+        self.tooltip = tooltip
+
+    def show(self):
+        self.shown = True
+
+
+def install_fake_pyqt6(testcase, tray_available, permissive=False):
+    """Point every `from PyQt6...` import in `main` at in-memory fakes.
+
+    `permissive=False` keeps the strict bare-`type()` stubs, which die the moment
+    real widget construction starts. That strictness is what proves the
+    tray-availability guard is load-bearing. `permissive=True` swaps in
+    `FakeQtWidget` so the code can run past that point.
+    """
+    RecordingTrayIcon.tray_available = tray_available
+    RecordingTrayIcon.instances = []
+    RecordingAction.instances = []
+
+    # A factory, not a value: each call must hand back a class, because the
+    # production code does `QMenu()` / `QAction(...)` / `QTimer()`.
+    stub = (lambda: FakeQtWidget) if permissive else (lambda: type("Stub", (), {}))
+
     qtwidgets = ModuleType("PyQt6.QtWidgets")
     qtwidgets.QApplication = FakeQApplication
-    qtwidgets.QMenu = type("QMenu", (), {})
-    qtwidgets.QSystemTrayIcon = type(
-        "QSystemTrayIcon",
-        (),
-        {"isSystemTrayAvailable": staticmethod(lambda: tray_available)},
-    )
+    qtwidgets.QMenu = stub()
+    qtwidgets.QSystemTrayIcon = RecordingTrayIcon
 
     qtcore = ModuleType("PyQt6.QtCore")
-    qtcore.QTimer = type("QTimer", (), {})
+    qtcore.QTimer = stub()
 
     qtgui = ModuleType("PyQt6.QtGui")
-    qtgui.QAction = type("QAction", (), {})
-    qtgui.QIcon = type("QIcon", (), {})
+    qtgui.QAction = RecordingAction if permissive else stub()
+    qtgui.QIcon = stub()
+    qtgui.QImage = stub()
+    qtgui.QPixmap = stub()
 
     package = ModuleType("PyQt6")
     package.__path__ = []
@@ -321,6 +431,70 @@ class QtTrayAvailabilityTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 start_tray(StrixDevice())
         tray_class.assert_not_called()
+
+
+class OfflineMessageWiringTests(unittest.TestCase):
+    """`offline_message` must reach the user through every tray backend.
+
+    Reverting any of these three call sites to a hardcoded string must fail the
+    suite; without these tests the whole user-visible outcome of the permission
+    fix is unverified.
+    """
+
+    def test_qt_tray_tooltip_carries_the_message(self):
+        install_fake_pyqt6(self, tray_available=True, permissive=True)
+        device = StrixDevice()
+        device.last_error = ERROR_PERMISSION
+        with patch.object(device, "query", return_value=None):
+            with self.assertRaises(SystemExit):
+                run_pyqt_tray(device)
+        tray = RecordingTrayIcon.instances[-1]
+        self.assertEqual(tray.tooltip, offline_message(ERROR_PERMISSION))
+        self.assertTrue(tray.shown)
+
+    def test_qt_tray_tooltip_falls_back_to_plain_offline(self):
+        install_fake_pyqt6(self, tray_available=True, permissive=True)
+        device = StrixDevice()
+        device.last_error = ERROR_OFFLINE
+        with patch.object(device, "query", return_value=None):
+            with self.assertRaises(SystemExit):
+                run_pyqt_tray(device)
+        tray = RecordingTrayIcon.instances[-1]
+        self.assertEqual(tray.tooltip, offline_message(ERROR_OFFLINE))
+
+    def test_qt_menu_item_carries_the_message(self):
+        install_fake_pyqt6(self, tray_available=True, permissive=True)
+        device = StrixDevice()
+        device.last_error = ERROR_PERMISSION
+        with patch.object(device, "query", return_value=None):
+            with self.assertRaises(SystemExit):
+                run_pyqt_tray(device)
+        # Assert by membership, not by creation order, so reordering the action
+        # construction does not break this.
+        texts = [a.text for a in RecordingAction.instances if a.text is not None]
+        self.assertIn(
+            f"{HEADSET_ICON} {offline_message(ERROR_PERMISSION)}", texts
+        )
+
+    def test_pystray_menu_item_carries_the_message(self):
+        tray = object.__new__(StrixTrayPystray)
+        device = FakeDevice()
+        device.last_error = ERROR_PERMISSION
+        tray.device = device
+        self.assertEqual(tray.get_status_text(), offline_message(ERROR_PERMISSION))
+
+    def test_pystray_tooltip_carries_the_message(self):
+        tray = object.__new__(StrixTrayPystray)
+        device = FakeDevice()
+        device.last_error = ERROR_PERMISSION
+        tray.device = device
+        tray.icon = FakePystrayIcon()
+        tray._shutting_down = False
+        with patch.object(device, "query", return_value=None), patch(
+            "main.render_tray_icon", return_value=object()
+        ):
+            tray.update_tray()
+        self.assertEqual(tray.icon.title, offline_message(ERROR_PERMISSION))
 
 
 class SleepDurationTests(unittest.TestCase):
@@ -433,6 +607,7 @@ class FakeDevice:
             "sleep_min": 0,
         }
         self.last_error = None
+        self.last_status = None
 
     def query(self):
         self.query_threads.append(threading.get_ident())

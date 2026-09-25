@@ -74,17 +74,23 @@ def mv_to_percent(mv: int) -> int:
 
 
 def offline_message(last_error: str | None) -> str:
-    """Explain why no headset answered, telling permissions apart from absence.
+    """Explain why no headset answered, without blaming one unproven cause.
 
-    Returns plain text with no leading glyph so both the Qt and pystray paths
-    can reuse it and so the tests can assert on ASCII.
+    `ERROR_PERMISSION` means a hidraw node denied access *while scanning*, not
+    that this is why the headset is unreachable. Plenty of hosts own a
+    root:root 0660 hidraw node for a built-in laptop HID device, and the udev
+    rule in the README only matches 0b05:18d6/18d7, so such a node is denied
+    even on a correctly configured machine. Reporting that as the cause sends a
+    user who already installed the rule to install it again, so the permission
+    case is a hint appended to the offline diagnosis, never a replacement for it.
     """
+    message = "Headset: Offline / Out of range"
     if last_error == ERROR_PERMISSION:
-        return (
-            "Headset: no permission to open /dev/hidraw* "
-            "-- see the udev rules in the README"
+        message += (
+            " (a /dev/hidraw* node also denied permission -"
+            " check the udev rules in the README)"
         )
-    return "Headset: Offline / Out of range"
+    return message
 
 
 class StrixDevice:
