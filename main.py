@@ -20,6 +20,10 @@ ASUS_VID = 0x0B05
 STRIX_PIDS = [0x18D6, 0x18D7]  # 0x18D6: Kablosuz Dongle, 0x18D7: Kablolu Mod
 MAX_SLEEP_MINUTES = 1092
 
+# `notify-send` runs on the Qt/GLib main thread, so a hung notification daemon
+# would freeze the event loop with no way out. Bound the wait.
+NOTIFY_TIMEOUT_SECONDS = 3
+
 # 64-byte status query packet
 QUERY_PACKET = bytearray([
     0xFF, 0x08, 0x00, 0xFD, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x01
@@ -156,10 +160,17 @@ class StrixDevice:
             os.close(fd)
 
     def notify(self, title: str, msg: str):
-        """Send a desktop notification through notify-send."""
+        """Send a desktop notification through notify-send, bounded in time."""
         try:
-            subprocess.run(["notify-send", title, msg, "-i", "audio-headset"], check=False)
+            subprocess.run(
+                ["notify-send", title, msg, "-i", "audio-headset"],
+                check=False,
+                timeout=NOTIFY_TIMEOUT_SECONDS,
+            )
         except (FileNotFoundError, subprocess.SubprocessError):
+            # FileNotFoundError: notify-send is not installed.
+            # SubprocessError covers TimeoutExpired, so a hung daemon can only
+            # stall the tray briefly instead of freezing it permanently.
             pass
 
 

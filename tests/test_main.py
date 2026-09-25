@@ -1,10 +1,52 @@
+import subprocess
 import threading
 import unittest
 from types import ModuleType
 from unittest.mock import patch
 
 import main
-from main import MAX_SLEEP_MINUTES, StrixTrayPystray, validate_sleep_minutes
+from main import (
+    MAX_SLEEP_MINUTES,
+    NOTIFY_TIMEOUT_SECONDS,
+    StrixDevice,
+    StrixTrayPystray,
+    validate_sleep_minutes,
+)
+
+
+class NotifyTests(unittest.TestCase):
+    """`notify()` runs on the GUI main thread, so it must never block forever."""
+
+    def test_notify_passes_a_timeout_to_the_subprocess(self):
+        device = StrixDevice()
+        with patch("main.subprocess.run") as run:
+            device.notify("ROG Strix Go", "Battery critically low: 12%!")
+        self.assertEqual(
+            run.call_args.kwargs.get("timeout"),
+            NOTIFY_TIMEOUT_SECONDS,
+            "notify-send must be bounded so a wedged D-Bus cannot freeze the tray",
+        )
+
+    def test_notify_swallows_a_timed_out_notify_send(self):
+        device = StrixDevice()
+        with patch(
+            "main.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("notify-send", 5),
+        ):
+            device.notify("ROG Strix Go", "Battery critically low: 12%!")
+
+    def test_notify_swallows_a_missing_notify_send_binary(self):
+        device = StrixDevice()
+        with patch(
+            "main.subprocess.run", side_effect=FileNotFoundError("notify-send")
+        ):
+            device.notify("ROG Strix Go", "Battery critically low: 12%!")
+
+    def test_notify_survives_a_failing_notify_send_exit_code(self):
+        device = StrixDevice()
+        with patch("main.subprocess.run", return_value=None) as run:
+            device.notify("ROG Strix Go", "Battery critically low: 12%!")
+        self.assertIs(run.call_args.kwargs.get("check"), False)
 
 
 class SleepDurationTests(unittest.TestCase):
