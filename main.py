@@ -382,6 +382,20 @@ def run_pyqt_tray(device: StrixDevice):
         app = QApplication(sys.argv)
     QApplication.setQuitOnLastWindowClosed(False)
 
+    if not QSystemTrayIcon.isSystemTrayAvailable():
+        # Without a StatusNotifierItem host the icon never appears and the
+        # process would sit in app.exec() forever with no window and no menu.
+        # SystemExit, not ImportError: start_tray only catches ImportError, and
+        # the pystray fallback needs a tray just as much.
+        print(
+            "Error: no system tray was found on this desktop.\n"
+            "Qt could not reach a StatusNotifierItem host, so the tray icon "
+            "would never appear.\n"
+            "On GNOME, install the AppIndicator extension; on KDE Plasma, "
+            "enable the Status Notifier extra.\n"
+        )
+        sys.exit(1)
+
     tray = QSystemTrayIcon()
     menu = QMenu()
 

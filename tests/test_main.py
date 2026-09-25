@@ -17,6 +17,8 @@ from main import (
     StrixTrayPystray,
     mv_to_percent,
     offline_message,
+    run_pyqt_tray,
+    start_tray,
     validate_sleep_minutes,
 )
 
@@ -239,6 +241,86 @@ class LastErrorTests(unittest.TestCase):
 
     def test_offline_message_defaults_to_offline_for_an_unknown_error(self):
         self.assertEqual(offline_message(None), "Headset: Offline / Out of range")
+
+
+class FakeQApplication:
+    """Just enough QApplication for the tray-availability guard."""
+
+    _instance = None
+
+    @classmethod
+    def instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    @staticmethod
+    def setQuitOnLastWindowClosed(value):
+        pass
+
+
+def install_fake_pyqt6(testcase, tray_available):
+    """Point every `from PyQt6...` import in `main` at in-memory fakes."""
+    qtwidgets = ModuleType("PyQt6.QtWidgets")
+    qtwidgets.QApplication = FakeQApplication
+    qtwidgets.QMenu = type("QMenu", (), {})
+    qtwidgets.QSystemTrayIcon = type(
+        "QSystemTrayIcon",
+        (),
+        {"isSystemTrayAvailable": staticmethod(lambda: tray_available)},
+    )
+
+    qtcore = ModuleType("PyQt6.QtCore")
+    qtcore.QTimer = type("QTimer", (), {})
+
+    qtgui = ModuleType("PyQt6.QtGui")
+    qtgui.QAction = type("QAction", (), {})
+    qtgui.QIcon = type("QIcon", (), {})
+
+    package = ModuleType("PyQt6")
+    package.__path__ = []
+
+    patcher = patch.dict(
+        "sys.modules",
+        {
+            "PyQt6": package,
+            "PyQt6.QtCore": qtcore,
+            "PyQt6.QtGui": qtgui,
+            "PyQt6.QtWidgets": qtwidgets,
+        },
+    )
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
+
+
+class QtTrayAvailabilityTests(unittest.TestCase):
+    """A desktop with no tray must get a clear message, not a silent hang."""
+
+    def test_run_pyqt_tray_exits_when_no_system_tray_host_exists(self):
+        install_fake_pyqt6(self, tray_available=False)
+        printed = []
+        with patch("builtins.print", side_effect=printed.append):
+            with self.assertRaises(SystemExit) as raised:
+                run_pyqt_tray(StrixDevice())
+        self.assertEqual(raised.exception.code, 1)
+        self.assertIn("no system tray", " ".join(printed).lower())
+
+    def test_the_guard_exits_rather_than_raising_import_error(self):
+        # start_tray catches ImportError and falls back to pystray, which also
+        # needs a tray. SystemExit is a BaseException, so it escapes that catch.
+        install_fake_pyqt6(self, tray_available=False)
+        with patch("builtins.print"):
+            with self.assertRaises(SystemExit):
+                run_pyqt_tray(StrixDevice())
+
+    def test_start_tray_does_not_fall_back_to_pystray_on_a_tray_less_desktop(self):
+        install_fake_pyqt6(self, tray_available=False)
+        with patch("builtins.print"), patch(
+            "main.importlib.util.find_spec", return_value=object()
+        ), patch("main.StrixTrayPystray") as tray_class:
+            with self.assertRaises(SystemExit):
+                start_tray(StrixDevice())
+        tray_class.assert_not_called()
 
 
 class SleepDurationTests(unittest.TestCase):
