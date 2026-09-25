@@ -20,6 +20,15 @@ ASUS_VID = 0x0B05
 STRIX_PIDS = [0x18D6, 0x18D7]  # 0x18D6: Kablosuz Dongle, 0x18D7: Kablolu Mod
 MAX_SLEEP_MINUTES = 1092
 
+# Why the last query produced no status. Distinguishing these lets the tray
+# tell the user to fix their udev rules instead of blaming the headset.
+ERROR_OFFLINE = "offline"
+ERROR_PERMISSION = "permission"
+
+# Tray glyphs as ASCII escapes so the source stays copy-pasteable and greppable.
+HEADSET_ICON = "\U0001F3A7"
+SLEEP_ICON = "\u23F1\uFE0F"
+
 # `notify-send` runs on the Qt/GLib main thread, so a hung notification daemon
 # would freeze the event loop with no way out. Bound the wait.
 NOTIFY_TIMEOUT_SECONDS = 3
@@ -64,12 +73,28 @@ def mv_to_percent(mv: int) -> int:
     return int((mv - 3300) / (4150 - 3300) * 100)
 
 
+def offline_message(last_error: str | None) -> str:
+    """Explain why no headset answered, telling permissions apart from absence.
+
+    Returns plain text with no leading glyph so both the Qt and pystray paths
+    can reuse it and so the tests can assert on ASCII.
+    """
+    if last_error == ERROR_PERMISSION:
+        return (
+            "Headset: no permission to open /dev/hidraw* "
+            "-- see the udev rules in the README"
+        )
+    return "Headset: Offline / Out of range"
+
+
 class StrixDevice:
     """Manage USB HID communication with the ROG Strix Go 2.4."""
 
     def __init__(self):
         self.last_status = None
         self.notified_low = False
+        self.last_error = None
+        self._permission_denied = False
         self._displayed_percentage = None
 
     def stabilize_percentage(self, percentage: int) -> int:
@@ -88,9 +113,10 @@ class StrixDevice:
             self._displayed_percentage = percentage
         return self._displayed_percentage
 
-    def _go_offline(self):
+    def _go_offline(self, error: str = ERROR_OFFLINE):
         """Record that no headset answered and drop the display hold."""
         self.last_status = None
+        self.last_error = error
         self._displayed_percentage = None
 
     def _update_low_battery_notice(self, percentage: int, charging: bool) -> bool:
@@ -113,9 +139,15 @@ class StrixDevice:
 
     def find_node(self):
         """Find the ASUS ROG Strix Go device and return its file descriptor."""
+        permission_denied = False
         for path in sorted(glob.glob("/dev/hidraw*")):
             try:
                 fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+            except PermissionError:
+                # The udev rule from the README is missing. Keep scanning: a
+                # different node may still be the receiver.
+                permission_denied = True
+                continue
             except OSError:
                 continue
 
@@ -124,18 +156,24 @@ class StrixDevice:
                 fcntl.ioctl(fd, HIDIOCGRAWINFO, buf)
                 _, vid, pid = struct.unpack('<Ihh', buf)
                 if (vid & 0xFFFF) == ASUS_VID and (pid & 0xFFFF) in STRIX_PIDS:
+                    # We found it, so a denied node elsewhere is irrelevant.
+                    self._permission_denied = False
                     return fd, path
                 os.close(fd)
             except (OSError, struct.error):
                 os.close(fd)
                 continue
+
+        self._permission_denied = permission_denied
         return None, None
 
     def query(self):
         """Read the headset battery, voltage, charging, and sleep timer status."""
         fd, path = self.find_node()
         if fd is None:
-            self._go_offline()
+            self._go_offline(
+                ERROR_PERMISSION if self._permission_denied else ERROR_OFFLINE
+            )
             return None
 
         try:
@@ -165,6 +203,7 @@ class StrixDevice:
                 "path": path
             }
             self.last_status = status
+            self.last_error = None
 
             self._update_low_battery_notice(pct, charging)
 
@@ -395,9 +434,10 @@ def run_pyqt_tray(device: StrixDevice):
             tooltip = f"ROG Strix Go 2.4: {pct}% ({power_status})\nVoltage: {v} mV\nSleep timer: {slp} min"
             icon_img = render_tray_icon(pct, chg, connected=True)
         else:
-            status_action.setText("🎧 Headset: Offline / Out of range")
-            sleep_action.setText("⏱️ Sleep Timer: -")
-            tooltip = "ROG Strix Go 2.4: Offline"
+            message = offline_message(device.last_error)
+            status_action.setText(f"{HEADSET_ICON} {message}")
+            sleep_action.setText(f"{SLEEP_ICON} Sleep Timer: -")
+            tooltip = message
             icon_img = render_tray_icon(0, False, connected=False)
 
         qpix = pil_to_qpixmap(icon_img)
@@ -434,7 +474,7 @@ class StrixTrayPystray:
     def get_status_text(self):
         st = self.device.last_status
         if not st:
-            return "Headset: Offline / Out of range"
+            return offline_message(self.device.last_error)
         power_status = "Charging" if st["charging"] else "On battery"
         return f"Battery: {st['percentage']}% ({st['voltage']} mV - {power_status})"
 
@@ -475,7 +515,7 @@ class StrixTrayPystray:
             self.icon.title = f"ROG Strix Go: {pct}% ({'Charging' if st['charging'] else 'On battery'})"
         else:
             self.icon.icon = render_tray_icon(0, False, connected=False)
-            self.icon.title = "ROG Strix Go: Offline"
+            self.icon.title = offline_message(self.device.last_error)
 
     def quit(self):
         if self._shutting_down:

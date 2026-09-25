@@ -1,3 +1,4 @@
+import struct
 import subprocess
 import threading
 import unittest
@@ -6,11 +7,16 @@ from unittest.mock import patch
 
 import main
 from main import (
+    ERROR_OFFLINE,
+    ERROR_PERMISSION,
+    HIDIOCGFEATURE_64,
+    HIDIOCGRAWINFO,
     MAX_SLEEP_MINUTES,
     NOTIFY_TIMEOUT_SECONDS,
     StrixDevice,
     StrixTrayPystray,
     mv_to_percent,
+    offline_message,
     validate_sleep_minutes,
 )
 
@@ -134,6 +140,107 @@ class NotifyTests(unittest.TestCase):
         self.assertIs(run.call_args.kwargs.get("check"), False)
 
 
+ASUS_DEVINFO = struct.pack("<Ihh", 5, 0x0B05, 0x18D6)
+
+
+def deny_first_node(path, *args, **kwargs):
+    """`os.open` stand-in: /dev/hidraw0 is denied, every other node opens."""
+    if path == "/dev/hidraw0":
+        raise PermissionError(13, "Permission denied")
+    return 7
+
+
+def asus_ioctl(devinfo=ASUS_DEVINFO):
+    """`fcntl.ioctl` stand-in: report an ASUS device and a valid status reply.
+
+    Writes real bytes so `query()` reaches its success path. A bare MagicMock
+    here would leave the read buffer zeroed, which the code correctly reports
+    as offline, so the stale-error test would never clear.
+    """
+
+    def _ioctl(fd, request, buf, *args, **kwargs):
+        if request == HIDIOCGRAWINFO:
+            buf[:8] = devinfo
+        elif request == HIDIOCGFEATURE_64:
+            buf[1] = 0x1B   # status reply marker
+            buf[9] = 0x0A   # charging
+            buf[11] = 0x40  # voltage LSB; 0x0F40 = 3904 mV
+            buf[12] = 0x0F
+            buf[21] = 0x00  # sleep seconds
+            buf[22] = 0x00
+
+    return _ioctl
+
+
+class LastErrorTests(unittest.TestCase):
+    """A missing udev rule must not be reported as a missing headset."""
+
+    def test_permission_denied_on_a_hidraw_node_is_reported_as_a_permission_error(self):
+        device = StrixDevice()
+        with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
+            "main.os.open", side_effect=PermissionError(13, "Permission denied")
+        ):
+            self.assertIsNone(device.query())
+        self.assertEqual(device.last_error, ERROR_PERMISSION)
+
+    def test_a_vanished_receiver_is_reported_as_offline(self):
+        device = StrixDevice()
+        with patch("main.glob.glob", return_value=[]):
+            self.assertIsNone(device.query())
+        self.assertEqual(device.last_error, ERROR_OFFLINE)
+
+    def test_a_non_permission_open_failure_is_still_reported_as_offline(self):
+        device = StrixDevice()
+        with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
+            "main.os.open", side_effect=OSError(19, "No such device")
+        ):
+            self.assertIsNone(device.query())
+        self.assertEqual(device.last_error, ERROR_OFFLINE)
+
+    def test_a_successful_query_clears_a_stale_permission_error(self):
+        device = StrixDevice()
+        with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
+            "main.os.open", side_effect=PermissionError(13, "Permission denied")
+        ):
+            device.query()
+        self.assertEqual(device.last_error, ERROR_PERMISSION)
+
+        with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
+            "main.os.open", return_value=7
+        ), patch("main.fcntl.ioctl", side_effect=asus_ioctl()), patch(
+            "main.time.sleep"
+        ), patch("main.os.close"):
+            self.assertIsNotNone(device.query())
+        self.assertIsNone(device.last_error)
+
+    def test_a_denied_node_does_not_hide_the_real_receiver(self):
+        device = StrixDevice()
+        with patch(
+            "main.glob.glob", return_value=["/dev/hidraw0", "/dev/hidraw1"]
+        ), patch("main.os.open", side_effect=deny_first_node), patch(
+            "main.os.close"
+        ), patch("main.fcntl.ioctl", side_effect=asus_ioctl()), patch(
+            "main.time.sleep"
+        ):
+            fd, path = device.find_node()
+        self.assertEqual(path, "/dev/hidraw1")
+        self.assertFalse(device._permission_denied)
+
+    def test_offline_message_names_the_udev_rules_for_a_permission_error(self):
+        message = offline_message(ERROR_PERMISSION)
+        self.assertIn("permission", message.lower())
+        self.assertIn("udev", message.lower())
+        self.assertNotEqual(message, offline_message(ERROR_OFFLINE))
+
+    def test_offline_message_stays_generic_when_the_headset_is_simply_absent(self):
+        self.assertEqual(
+            offline_message(ERROR_OFFLINE), "Headset: Offline / Out of range"
+        )
+
+    def test_offline_message_defaults_to_offline_for_an_unknown_error(self):
+        self.assertEqual(offline_message(None), "Headset: Offline / Out of range")
+
+
 class SleepDurationTests(unittest.TestCase):
     def test_accepts_values_that_fit_the_hid_field(self):
         self.assertEqual(validate_sleep_minutes(0), 0)
@@ -243,6 +350,7 @@ class FakeDevice:
             "charging": True,
             "sleep_min": 0,
         }
+        self.last_error = None
 
     def query(self):
         self.query_threads.append(threading.get_ident())
