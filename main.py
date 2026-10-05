@@ -29,6 +29,7 @@ ERROR_PERMISSION = "permission"
 # Tray glyphs as ASCII escapes so the source stays copy-pasteable and greppable.
 HEADSET_ICON = "\U0001F3A7"
 SLEEP_ICON = "\u23F1\uFE0F"
+NOISE_REDUCTION_ICON = "\U0001F507"
 
 # `notify-send` runs on the Qt/GLib main thread, so a hung notification daemon
 # would freeze the event loop with no way out. Bound the wait.
@@ -478,6 +479,10 @@ def run_pyqt_tray(device: StrixDevice):
     sleep_action.setEnabled(False)
     menu.addAction(sleep_action)
 
+    noise_action = QAction(f"{NOISE_REDUCTION_ICON} Microphone Noise Reduction: -", menu)
+    noise_action.setEnabled(False)
+    menu.addAction(noise_action)
+
     menu.addSeparator()
 
     sleep_menu = QMenu("Automatic Sleep Timer", menu)
@@ -492,6 +497,19 @@ def run_pyqt_tray(device: StrixDevice):
         action.triggered.connect(lambda checked=False, m=mins: (device.set_sleep(m), update_state()))
         sleep_menu.addAction(action)
     menu.addMenu(sleep_menu)
+
+    noise_menu = QMenu("Microphone Noise Reduction", menu)
+    toggle_action = QAction("Toggle Microphone Noise Reduction", noise_menu)
+    # The firmware exposes no read-back for this setting, so the
+    # menu can only send the opposite of the last state we sent.
+    toggle_action.triggered.connect(
+        lambda checked=False: (
+            device.set_noise_reduction(not device.noise_reduction),
+            update_state(),
+        )
+    )
+    noise_menu.addAction(toggle_action)
+    menu.addMenu(noise_menu)
 
     menu.addSeparator()
 
@@ -516,12 +534,23 @@ def run_pyqt_tray(device: StrixDevice):
 
             status_action.setText(f"🎧 Battery: {pct}% ({v} mV - {power_status})")
             sleep_action.setText(f"⏱️ Sleep Timer: {slp} minutes")
+            noise_action.setText(
+                f"{NOISE_REDUCTION_ICON} Microphone Noise Reduction: "
+                f"{'On' if device.noise_reduction else 'Off'}"
+            )
             tooltip = f"ROG Strix Go 2.4: {pct}% ({power_status})\nVoltage: {v} mV\nSleep timer: {slp} min"
             icon_img = render_tray_icon(pct, chg, connected=True)
         else:
             message = offline_message(device.last_error)
             status_action.setText(f"{HEADSET_ICON} {message}")
             sleep_action.setText(f"{SLEEP_ICON} Sleep Timer: -")
+            # The setting persists in the headset, so a stored "on"
+            # stays a positive record even when nothing answers; "off"
+            # and "never set" are indistinguishable, so show "-" for both.
+            noise_action.setText(
+                f"{NOISE_REDUCTION_ICON} Microphone Noise Reduction: "
+                f"{'On' if device.noise_reduction else '-'}"
+            )
             tooltip = message
             icon_img = render_tray_icon(0, False, connected=False)
 
@@ -569,12 +598,17 @@ class StrixTrayPystray:
             return "Sleep Timer: -"
         return f"Sleep Timer: {st['sleep_min']} minutes"
 
+    def get_noise_reduction_text(self):
+        state = "On" if self.device.noise_reduction else "Off"
+        return f"Microphone Noise Reduction: {state}"
+
     def create_menu(self):
         from pystray import Menu
         from pystray import MenuItem as item
         return Menu(
             item(lambda text: self.get_status_text(), None, enabled=False),
             item(lambda text: self.get_sleep_text(), None, enabled=False),
+            item(lambda text: self.get_noise_reduction_text(), None, enabled=False),
             Menu.SEPARATOR,
             item("Automatic Sleep Timer", Menu(
                 item("Never Turn Off (0 min)", lambda: self.device.set_sleep(0)),
@@ -582,6 +616,12 @@ class StrixTrayPystray:
                 item("10 Minutes", lambda: self.device.set_sleep(10)),
                 item("15 Minutes", lambda: self.device.set_sleep(15)),
                 item("30 Minutes", lambda: self.device.set_sleep(30)),
+            )),
+            item("Microphone Noise Reduction", Menu(
+                item("Toggle Microphone Noise Reduction",
+                     lambda: self.device.set_noise_reduction(
+                         not self.device.noise_reduction
+                     )),
             )),
             item("Refresh Now", lambda: self.update_tray()),
             Menu.SEPARATOR,

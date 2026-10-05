@@ -324,6 +324,20 @@ class FakeQApplication(FakeQtWidget):
         return 0
 
 
+class FakeSignal:
+    """Records connections so a test can fire one."""
+
+    def __init__(self):
+        self.slots = []
+
+    def connect(self, slot):
+        self.slots.append(slot)
+
+    def emit(self, *args):
+        for slot in self.slots:
+            slot(*args)
+
+
 class RecordingAction(FakeQtWidget):
     """Records `setText` so the tray menu item's label can be asserted."""
 
@@ -332,7 +346,11 @@ class RecordingAction(FakeQtWidget):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         RecordingAction.instances.append(self)
-        self.text = None
+        # QAction's first positional argument is its label. Record it
+        # so a test can find an action by the text it was created
+        # with, not only by a later setText call.
+        self.text = args[0] if args else None
+        self.triggered = FakeSignal()
 
     def setText(self, text):
         self.text = text
@@ -612,6 +630,7 @@ class FakeDevice:
         }
         self.last_error = None
         self.last_status = None
+        self.noise_reduction = False
 
     def query(self):
         self.query_threads.append(threading.get_ident())
@@ -1276,6 +1295,98 @@ class NoiseReductionCliTests(unittest.TestCase):
                 main.main()
         setter.assert_not_called()
         self.assertNotEqual(ctx.exception.code, 0)
+
+
+class QtNoiseReductionMenuTests(unittest.TestCase):
+    """The PyQt6 tray must show the state and offer the toggle."""
+
+    def setUp(self):
+        # The tray reads the stored state at startup; keep that read
+        # inside this test's own directory so a state file left by a
+        # real toggle cannot change what these tests start from.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        patcher = patch(
+            "main.noise_reduction_state_path",
+            return_value=pathlib.Path(tmp.name) / "noise-reduction.json",
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def texts(self):
+        return [a.text for a in RecordingAction.instances if a.text is not None]
+
+    def test_the_status_row_reports_the_current_state(self):
+        install_fake_pyqt6(self, tray_available=True, permissive=True)
+        device = StrixDevice()
+        device.noise_reduction = True
+        with patch.object(device, "query", return_value=None):
+            with self.assertRaises(SystemExit):
+                run_pyqt_tray(device)
+        self.assertIn(
+            f"{main.NOISE_REDUCTION_ICON} Microphone Noise Reduction: On",
+            self.texts(),
+        )
+
+    def test_the_toggle_action_sends_the_opposite_state(self):
+        install_fake_pyqt6(self, tray_available=True, permissive=True)
+        device = StrixDevice()
+        device.noise_reduction = False
+        with patch.object(device, "query", return_value=None), patch.object(
+            device, "set_noise_reduction", return_value=True
+        ) as setter:
+            with self.assertRaises(SystemExit):
+                run_pyqt_tray(device)
+            # Fire the signal while the device is still patched:
+            # outside this block the lambda would reach the real
+            # set_noise_reduction instead of the recording mock.
+            toggle = next(a for a in RecordingAction.instances if a.text == "Toggle Microphone Noise Reduction")
+            toggle.triggered.emit(False)
+        setter.assert_called_once_with(True)
+
+    def test_offline_hides_the_current_value(self):
+        install_fake_pyqt6(self, tray_available=True, permissive=True)
+        device = StrixDevice()
+        with patch.object(device, "query", return_value=None):
+            with self.assertRaises(SystemExit):
+                run_pyqt_tray(device)
+        self.assertIn(
+            f"{main.NOISE_REDUCTION_ICON} Microphone Noise Reduction: -",
+            self.texts(),
+        )
+
+
+class PystrayNoiseReductionMenuTests(unittest.TestCase):
+    """The Pystray fallback must match the PyQt6 menu."""
+
+    def test_the_status_text_reflects_the_device_state(self):
+        tray = object.__new__(StrixTrayPystray)
+        device = FakeDevice()
+        device.noise_reduction = True
+        tray.device = device
+        self.assertIn("On", tray.get_noise_reduction_text())
+
+    def test_the_menu_offers_the_toggle_and_calls_the_device(self):
+        tray = object.__new__(StrixTrayPystray)
+        device = FakeDevice()
+        device.noise_reduction = False
+        device.set_noise_reduction_calls = []
+        device.set_noise_reduction = lambda enabled: device.set_noise_reduction_calls.append(enabled)
+        tray.device = device
+        # create_menu imports pystray at call time; point it at the
+        # same fakes the other menu tests use so the built menu can be
+        # introspected (real pystray keeps its action callable private).
+        pystray = ModuleType("pystray")
+        pystray.Menu = FakeMenu
+        pystray.MenuItem = FakeMenuItem
+
+        with patch.dict("sys.modules", {"pystray": pystray}):
+            menu = tray.create_menu()
+
+        toggle = find_menu_item(menu.items, "Toggle Microphone Noise Reduction")
+        self.assertIsNotNone(toggle)
+        toggle.action()
+        self.assertEqual(device.set_noise_reduction_calls, [True])
 
 
 if __name__ == "__main__":
