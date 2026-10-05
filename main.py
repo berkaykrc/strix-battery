@@ -504,16 +504,20 @@ def run_pyqt_tray(device: StrixDevice):
     menu.addMenu(sleep_menu)
 
     noise_menu = QMenu("Microphone Noise Reduction", menu)
-    toggle_action = QAction("Toggle Microphone Noise Reduction", noise_menu)
-    # The firmware exposes no read-back for this setting, so the
-    # menu can only send the opposite of the last state we sent.
-    toggle_action.triggered.connect(
-        lambda checked=False: (
-            device.set_noise_reduction(not device.noise_reduction),
-            update_state(),
-        )
+    # Two checkable options instead of a blind toggle: the user sees
+    # which state is active without having to reason about opposites.
+    enable_action = QAction("Enable Noise Reduction", noise_menu)
+    enable_action.setCheckable(True)
+    enable_action.triggered.connect(
+        lambda checked=False: (device.set_noise_reduction(True), update_state())
     )
-    noise_menu.addAction(toggle_action)
+    noise_menu.addAction(enable_action)
+    disable_action = QAction("Disable Noise Reduction", noise_menu)
+    disable_action.setCheckable(True)
+    disable_action.triggered.connect(
+        lambda checked=False: (device.set_noise_reduction(False), update_state())
+    )
+    noise_menu.addAction(disable_action)
     menu.addMenu(noise_menu)
 
     menu.addSeparator()
@@ -543,6 +547,8 @@ def run_pyqt_tray(device: StrixDevice):
                 f"{NOISE_REDUCTION_ICON} Microphone Noise Reduction: "
                 f"{'On' if device.noise_reduction else 'Off'}"
             )
+            enable_action.setChecked(device.noise_reduction)
+            disable_action.setChecked(not device.noise_reduction)
             tooltip = f"ROG Strix Go 2.4: {pct}% ({power_status})\nVoltage: {v} mV\nSleep timer: {slp} min"
             icon_img = render_tray_icon(pct, chg, connected=True)
         else:
@@ -556,6 +562,8 @@ def run_pyqt_tray(device: StrixDevice):
                 f"{NOISE_REDUCTION_ICON} Microphone Noise Reduction: "
                 f"{'On' if device.noise_reduction else '-'}"
             )
+            enable_action.setChecked(device.noise_reduction)
+            disable_action.setChecked(not device.noise_reduction)
             tooltip = message
             icon_img = render_tray_icon(0, False, connected=False)
 
@@ -623,10 +631,14 @@ class StrixTrayPystray:
                 item("30 Minutes", lambda: self.device.set_sleep(30)),
             )),
             item("Microphone Noise Reduction", Menu(
-                item("Toggle Microphone Noise Reduction",
-                     lambda: self.device.set_noise_reduction(
-                         not self.device.noise_reduction
-                     )),
+                item("Enable Noise Reduction",
+                     lambda: self.device.set_noise_reduction(True),
+                     checked=lambda item: self.device.noise_reduction,
+                     radio=True),
+                item("Disable Noise Reduction",
+                     lambda: self.device.set_noise_reduction(False),
+                     checked=lambda item: not self.device.noise_reduction,
+                     radio=True),
             )),
             item("Refresh Now", lambda: self.update_tray()),
             Menu.SEPARATOR,

@@ -351,9 +351,20 @@ class RecordingAction(FakeQtWidget):
         # with, not only by a later setText call.
         self.text = args[0] if args else None
         self.triggered = FakeSignal()
+        self.checkable = False
+        self.checked = False
 
     def setText(self, text):
         self.text = text
+
+    def setCheckable(self, checkable):
+        self.checkable = checkable
+
+    def setChecked(self, checked):
+        self.checked = checked
+
+    def isChecked(self):
+        return self.checked
 
 
 class RecordingTrayIcon(FakeQtWidget):
@@ -654,6 +665,8 @@ class FakeMenuItem:
         self.text = text
         self.action = action
         self.submenu = action if isinstance(action, FakeMenu) else None
+        self.checked = kwargs.get("checked")
+        self.radio = kwargs.get("radio", False)
 
 
 def find_menu_item(items, text):
@@ -1328,7 +1341,7 @@ class QtNoiseReductionMenuTests(unittest.TestCase):
             self.texts(),
         )
 
-    def test_the_toggle_action_sends_the_opposite_state(self):
+    def test_the_enable_action_turns_it_on(self):
         install_fake_pyqt6(self, tray_available=True, permissive=True)
         device = StrixDevice()
         device.noise_reduction = False
@@ -1340,9 +1353,33 @@ class QtNoiseReductionMenuTests(unittest.TestCase):
             # Fire the signal while the device is still patched:
             # outside this block the lambda would reach the real
             # set_noise_reduction instead of the recording mock.
-            toggle = next(a for a in RecordingAction.instances if a.text == "Toggle Microphone Noise Reduction")
-            toggle.triggered.emit(False)
+            enable = next(a for a in RecordingAction.instances if a.text == "Enable Noise Reduction")
+            enable.triggered.emit(False)
         setter.assert_called_once_with(True)
+
+    def test_the_disable_action_turns_it_off(self):
+        install_fake_pyqt6(self, tray_available=True, permissive=True)
+        device = StrixDevice()
+        device.noise_reduction = True
+        with patch.object(device, "query", return_value=None), patch.object(
+            device, "set_noise_reduction", return_value=True
+        ) as setter:
+            with self.assertRaises(SystemExit):
+                run_pyqt_tray(device)
+            disable = next(a for a in RecordingAction.instances if a.text == "Disable Noise Reduction")
+            disable.triggered.emit(False)
+        setter.assert_called_once_with(False)
+
+    def test_the_checked_option_reflects_the_current_state(self):
+        install_fake_pyqt6(self, tray_available=True, permissive=True)
+        device = StrixDevice()
+        device.noise_reduction = True
+        with patch.object(device, "query", return_value=None):
+            with self.assertRaises(SystemExit):
+                run_pyqt_tray(device)
+        by_text = {a.text: a for a in RecordingAction.instances}
+        self.assertTrue(by_text["Enable Noise Reduction"].isChecked())
+        self.assertFalse(by_text["Disable Noise Reduction"].isChecked())
 
     def test_offline_hides_the_current_value(self):
         install_fake_pyqt6(self, tray_available=True, permissive=True)
@@ -1366,7 +1403,7 @@ class PystrayNoiseReductionMenuTests(unittest.TestCase):
         tray.device = device
         self.assertIn("On", tray.get_noise_reduction_text())
 
-    def test_the_menu_offers_the_toggle_and_calls_the_device(self):
+    def test_the_menu_offers_on_and_off_options_and_calls_the_device(self):
         tray = object.__new__(StrixTrayPystray)
         device = FakeDevice()
         device.noise_reduction = False
@@ -1383,10 +1420,30 @@ class PystrayNoiseReductionMenuTests(unittest.TestCase):
         with patch.dict("sys.modules", {"pystray": pystray}):
             menu = tray.create_menu()
 
-        toggle = find_menu_item(menu.items, "Toggle Microphone Noise Reduction")
-        self.assertIsNotNone(toggle)
-        toggle.action()
-        self.assertEqual(device.set_noise_reduction_calls, [True])
+        enable = find_menu_item(menu.items, "Enable Noise Reduction")
+        disable = find_menu_item(menu.items, "Disable Noise Reduction")
+        self.assertIsNotNone(enable)
+        self.assertIsNotNone(disable)
+        enable.action()
+        disable.action()
+        self.assertEqual(device.set_noise_reduction_calls, [True, False])
+
+    def test_the_checked_option_reflects_the_device_state(self):
+        tray = object.__new__(StrixTrayPystray)
+        device = FakeDevice()
+        device.noise_reduction = True
+        tray.device = device
+        pystray = ModuleType("pystray")
+        pystray.Menu = FakeMenu
+        pystray.MenuItem = FakeMenuItem
+
+        with patch.dict("sys.modules", {"pystray": pystray}):
+            menu = tray.create_menu()
+
+        enable = find_menu_item(menu.items, "Enable Noise Reduction")
+        disable = find_menu_item(menu.items, "Disable Noise Reduction")
+        self.assertTrue(enable.checked(enable))
+        self.assertFalse(disable.checked(disable))
 
 
 if __name__ == "__main__":
