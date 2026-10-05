@@ -701,6 +701,12 @@ def main():
         metavar="MINUTES",
         help=f"Set the automatic sleep timer (0-{MAX_SLEEP_MINUTES} minutes; 0 = disabled)"
     )
+    parser.add_argument(
+        "-n", "--noise-reduction",
+        choices=["on", "off"],
+        metavar="STATE",
+        help="Set the microphone AI noise reduction (on or off)",
+    )
     args = parser.parse_args()
 
     device = StrixDevice()
@@ -720,6 +726,17 @@ def main():
         success = device.set_sleep(args.set_sleep)
         if success:
             print(f"Sleep timer set to {args.set_sleep} minutes.")
+        else:
+            print("Error: Headset receiver could not be reached.")
+            sys.exit(1)
+        return
+
+    # 2b. Toggle the microphone noise reduction.
+    if args.noise_reduction is not None:
+        enabled = args.noise_reduction == "on"
+        if device.set_noise_reduction(enabled):
+            print("Microphone noise reduction on." if enabled
+                  else "Microphone noise reduction off.")
         else:
             print("Error: Headset receiver could not be reached.")
             sys.exit(1)

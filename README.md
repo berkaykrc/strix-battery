@@ -55,6 +55,8 @@ Run the installed command:
 uv run strix-battery
 uv run strix-battery --json
 uv run strix-battery --set-sleep 30
+uv run strix-battery --noise-reduction on
+uv run strix-battery --noise-reduction off
 uv run strix-battery --tray
 ```
 

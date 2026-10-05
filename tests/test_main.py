@@ -2,6 +2,7 @@ import json
 import pathlib
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -1223,6 +1224,58 @@ class NoiseReductionStateFileTests(unittest.TestCase):
             with patch("main.glob.glob", return_value=[]):
                 device.set_noise_reduction(True)
             self.assertFalse(path.exists())
+
+
+class NoiseReductionCliTests(unittest.TestCase):
+    """`--noise-reduction on|off` must behave like `--set-sleep`."""
+
+    def run_main(self, argv):
+        out = []
+        with patch.object(sys, "argv", ["strix-battery"] + argv), patch(
+            "builtins.print", side_effect=out.append
+        ):
+            try:
+                main.main()
+            except SystemExit as exc:
+                return exc.code, out
+        return None, out
+
+    def test_on_prints_a_confirmation_and_exits_zero(self):
+        device = StrixDevice()
+        with patch.object(main, "StrixDevice", return_value=device), patch.object(
+            device, "set_noise_reduction", return_value=True
+        ) as setter:
+            code, out = self.run_main(["--noise-reduction", "on"])
+        setter.assert_called_once_with(True)
+        self.assertIn("noise reduction on", out[0].lower())
+        self.assertIsNone(code)
+
+    def test_off_turns_it_off(self):
+        device = StrixDevice()
+        with patch.object(main, "StrixDevice", return_value=device), patch.object(
+            device, "set_noise_reduction", return_value=True
+        ) as setter:
+            self.run_main(["--noise-reduction", "off"])
+        setter.assert_called_once_with(False)
+
+    def test_a_failed_send_reports_the_receiver_and_exits_one(self):
+        device = StrixDevice()
+        with patch.object(main, "StrixDevice", return_value=device), patch.object(
+            device, "set_noise_reduction", return_value=False
+        ):
+            code, out = self.run_main(["--noise-reduction", "on"])
+        self.assertEqual(code, 1)
+        self.assertIn("could not be reached", out[0])
+
+    def test_an_unknown_word_is_rejected_before_any_send(self):
+        device = StrixDevice()
+        with patch.object(sys, "argv", ["strix-battery", "--noise-reduction", "maybe"]), \
+             patch.object(main, "StrixDevice", return_value=device), \
+             patch.object(device, "set_noise_reduction") as setter:
+            with self.assertRaises(SystemExit) as ctx:
+                main.main()
+        setter.assert_not_called()
+        self.assertNotEqual(ctx.exception.code, 0)
 
 
 if __name__ == "__main__":
