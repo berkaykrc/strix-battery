@@ -267,7 +267,12 @@ class StrixDevice:
             os.close(fd)
 
     def set_noise_reduction(self, enabled: bool):
-        """Toggle the microphone AI noise reduction in the headset firmware."""
+        """Toggle the microphone AI noise reduction in the headset firmware.
+
+        The firmware accepts the report even while the headset is
+        asleep, so a successful send does not confirm the headset
+        applied the setting: the state file can lead the firmware.
+        """
         fd, _ = self.find_node()
         if fd is None:
             return False
