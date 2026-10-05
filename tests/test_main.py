@@ -1055,11 +1055,19 @@ class NoiseReductionPacketTests(unittest.TestCase):
                 buf[12] = 0x0F
 
         device = StrixDevice()
-        with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
-            "main.os.open", return_value=7
-        ), patch("main.fcntl.ioctl", side_effect=_ioctl), patch(
-            "main.time.sleep"
-        ), patch("main.os.close"), patch.object(device, "notify"):
+        # A successful send persists the state, so point the write at
+        # this test's own directory: the suite must never touch the
+        # real file under ~/.config.
+        with tempfile.TemporaryDirectory() as d, patch(
+            "main.glob.glob", return_value=["/dev/hidraw0"]
+        ), patch("main.os.open", return_value=7), patch(
+            "main.fcntl.ioctl", side_effect=_ioctl
+        ), patch("main.time.sleep"), patch("main.os.close"), patch.object(
+            device, "notify"
+        ), patch(
+            "main.noise_reduction_state_path",
+            return_value=pathlib.Path(d) / "noise-reduction.json",
+        ):
             self.assertTrue(device.set_noise_reduction(enabled))
 
         self.assertEqual(len(sent), 1)
@@ -1091,6 +1099,19 @@ class NoiseReductionPacketTests(unittest.TestCase):
 
 class NoiseReductionBehaviourTests(unittest.TestCase):
     """What `set_noise_reduction` reports and how it fails."""
+
+    def setUp(self):
+        # These tests assert the device's own state, so they must not
+        # inherit whatever the real state file under ~/.config holds
+        # from an earlier run.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        patcher = patch(
+            "main.noise_reduction_state_path",
+            return_value=pathlib.Path(tmp.name) / "noise-reduction.json",
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_the_new_state_is_recorded_on_the_device(self):
         device = StrixDevice()
