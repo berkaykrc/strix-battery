@@ -49,6 +49,12 @@ QUERY_PACKET = bytearray([
     0xFF, 0x08, 0x00, 0xFD, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x01
 ] + [0x00] * 54)
 
+# Mic noise reduction, from the packet G-Helper 0.286 sends for this headset:
+# FF 08 00 FF 04 12 F1 03 52 <0C off | 0D on>. Byte 9 is the only field that
+# changes between the two states, so keep the mapping in one place rather than
+# branching at the call site.
+NOISE_REDUCTION_SUB_COMMAND = {False: 0x0C, True: 0x0D}
+
 
 def _load_glib():
     from gi.repository import GLib
@@ -102,6 +108,7 @@ class StrixDevice:
         self.last_error = None
         self._permission_denied = False
         self._displayed_percentage = None
+        self.noise_reduction = False
 
     def stabilize_percentage(self, percentage: int) -> int:
         """Hold the last reported percentage until it genuinely moves.
@@ -244,6 +251,31 @@ class StrixDevice:
             fcntl.ioctl(fd, HIDIOCSFEATURE_64, payload)
             self.notify("ROG Strix Go", f"Sleep timer set to {minutes} minutes.")
             self.query()
+            return True
+        except OSError:
+            return False
+        finally:
+            os.close(fd)
+
+    def set_noise_reduction(self, enabled: bool):
+        """Toggle the microphone AI noise reduction in the headset firmware."""
+        fd, _ = self.find_node()
+        if fd is None:
+            return False
+
+        try:
+            payload = bytearray([
+                0xFF, 0x08, 0x00, 0xFF, 0x04, 0x12, 0xF1, 0x03, 0x52,
+                NOISE_REDUCTION_SUB_COMMAND[bool(enabled)]
+            ] + [0x00] * 54)
+
+            fcntl.ioctl(fd, HIDIOCSFEATURE_64, payload)
+            self.noise_reduction = bool(enabled)
+            self.notify(
+                "ROG Strix Go",
+                "Microphone noise reduction on." if enabled
+                else "Microphone noise reduction off."
+            )
             return True
         except OSError:
             return False

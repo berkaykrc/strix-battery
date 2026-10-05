@@ -1027,5 +1027,105 @@ class QtSignalShutdownTests(unittest.TestCase):
         self.assert_previous_handler_restored(signal_module, previous_handler)
 
 
+class NoiseReductionPacketTests(unittest.TestCase):
+    """The mic noise-reduction packet, byte for byte.
+
+    The command bytes come from the frame G-Helper 0.286 sends for this
+    headset: `FF 08 00 FF 04 12 F1 03 52 <0x0C off | 0x0D on>`. Byte 9 is the
+    only field that changes, so pinning the whole packet is what catches a
+    silent regression in the header, the report ID or the sub-command.
+    """
+
+    def sent_packet(self, enabled):
+        """Run `set_noise_reduction` against a recording ioctl and return the
+        bytes handed to HIDIOCSFEATURE_64."""
+        sent = []
+
+        def _ioctl(fd, request, buf, *args, **kwargs):
+            if request == main.HIDIOCGRAWINFO:
+                buf[:8] = ASUS_DEVINFO
+            elif request == main.HIDIOCSFEATURE_64:
+                sent.append(bytes(buf))
+            elif request == main.HIDIOCGFEATURE_64:
+                buf[1] = 0x1B
+                buf[11] = 0x40
+                buf[12] = 0x0F
+
+        device = StrixDevice()
+        with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
+            "main.os.open", return_value=7
+        ), patch("main.fcntl.ioctl", side_effect=_ioctl), patch(
+            "main.time.sleep"
+        ), patch("main.os.close"), patch.object(device, "notify"):
+            self.assertTrue(device.set_noise_reduction(enabled))
+
+        self.assertEqual(len(sent), 1)
+        return sent[0]
+
+    def test_enabling_sends_the_on_sub_command(self):
+        packet = self.sent_packet(True)
+        self.assertEqual(
+            packet[:10], bytes([0xFF, 0x08, 0x00, 0xFF, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x0D])
+        )
+
+    def test_disabling_sends_the_off_sub_command(self):
+        packet = self.sent_packet(False)
+        self.assertEqual(
+            packet[:10], bytes([0xFF, 0x08, 0x00, 0xFF, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x0C])
+        )
+
+    def test_the_packet_is_padded_to_the_report_length(self):
+        packet = self.sent_packet(True)
+        self.assertEqual(len(packet), 64)
+        self.assertEqual(set(packet[10:]), {0x00})
+
+    def test_only_byte_nine_differs_between_the_two_states(self):
+        on = self.sent_packet(True)
+        off = self.sent_packet(False)
+        differing = [i for i in range(64) if on[i] != off[i]]
+        self.assertEqual(differing, [9])
+
+
+class NoiseReductionBehaviourTests(unittest.TestCase):
+    """What `set_noise_reduction` reports and how it fails."""
+
+    def test_the_new_state_is_recorded_on_the_device(self):
+        device = StrixDevice()
+        with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
+            "main.os.open", return_value=7
+        ), patch("main.fcntl.ioctl", side_effect=asus_ioctl()), patch(
+            "main.time.sleep"
+        ), patch("main.os.close"), patch.object(device, "notify"):
+            device.set_noise_reduction(True)
+            self.assertTrue(device.noise_reduction)
+
+            device.set_noise_reduction(False)
+            self.assertFalse(device.noise_reduction)
+
+    def test_a_missing_receiver_fails_without_claiming_a_state_change(self):
+        device = StrixDevice()
+        with patch("main.glob.glob", return_value=[]):
+            self.assertFalse(device.set_noise_reduction(True))
+        self.assertFalse(device.noise_reduction)
+
+    def test_a_denied_node_fails_without_claiming_a_state_change(self):
+        device = StrixDevice()
+        with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
+            "main.os.open", side_effect=PermissionError(13, "Permission denied")
+        ):
+            self.assertFalse(device.set_noise_reduction(True))
+        self.assertFalse(device.noise_reduction)
+
+    def test_an_ioctl_failure_fails_without_claiming_a_state_change(self):
+        device = StrixDevice()
+        with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
+            "main.os.open", return_value=7
+        ), patch("main.fcntl.ioctl", side_effect=OSError(19, "No such device")), patch(
+            "main.os.close"
+        ):
+            self.assertFalse(device.set_noise_reduction(True))
+        self.assertFalse(device.noise_reduction)
+
+
 if __name__ == "__main__":
     unittest.main()
