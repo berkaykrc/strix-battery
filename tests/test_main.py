@@ -1,5 +1,8 @@
+import json
+import pathlib
 import struct
 import subprocess
+import tempfile
 import threading
 import unittest
 from types import ModuleType
@@ -1125,6 +1128,80 @@ class NoiseReductionBehaviourTests(unittest.TestCase):
         ):
             self.assertFalse(device.set_noise_reduction(True))
         self.assertFalse(device.noise_reduction)
+
+
+class NoiseReductionStateFileTests(unittest.TestCase):
+    """The firmware cannot be asked for this setting, so it must be stored.
+
+    A missing, unreadable or hand-mangled file has to degrade to "off" rather
+    than take the tray down at startup.
+    """
+
+    def write_state(self, tmp, content):
+        path = tmp / "noise_reduction.json"
+        path.write_text(content)
+        return path
+
+    def test_a_saved_true_is_restored(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = pathlib.Path(d)
+            path = self.write_state(tmp, json.dumps({"noise_reduction": True}))
+            with patch("main.noise_reduction_state_path", return_value=path):
+                device = StrixDevice()
+                device.load_noise_reduction_state()
+            self.assertTrue(device.noise_reduction)
+
+    def test_a_missing_file_leaves_the_state_off(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = pathlib.Path(d)
+            with patch("main.noise_reduction_state_path", return_value=tmp / "absent.json"):
+                device = StrixDevice()
+                device.load_noise_reduction_state()
+            self.assertFalse(device.noise_reduction)
+
+    def test_garbage_json_leaves_the_state_off(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = pathlib.Path(d)
+            path = self.write_state(tmp, "{not json at all")
+            with patch("main.noise_reduction_state_path", return_value=path):
+                device = StrixDevice()
+                device.load_noise_reduction_state()
+            self.assertFalse(device.noise_reduction)
+
+    def test_a_saved_non_boolean_leaves_the_state_off(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = pathlib.Path(d)
+            path = self.write_state(tmp, json.dumps({"noise_reduction": "yes"}))
+            with patch("main.noise_reduction_state_path", return_value=path):
+                device = StrixDevice()
+                device.load_noise_reduction_state()
+            self.assertFalse(device.noise_reduction)
+
+    def test_the_state_is_written_as_a_boolean_after_a_successful_send(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = pathlib.Path(d)
+            path = tmp / "noise_reduction.json"
+            device = StrixDevice()
+            with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
+                "main.os.open", return_value=7
+            ), patch("main.fcntl.ioctl", side_effect=asus_ioctl()), patch(
+                "main.time.sleep"
+            ), patch("main.os.close"), patch.object(device, "notify"), patch(
+                "main.noise_reduction_state_path", return_value=path
+            ):
+                device.set_noise_reduction(True)
+            self.assertEqual(
+                json.loads(path.read_text()), {"noise_reduction": True}
+            )
+
+    def test_a_failed_send_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = pathlib.Path(d)
+            path = tmp / "noise_reduction.json"
+            device = StrixDevice()
+            with patch("main.glob.glob", return_value=[]):
+                device.set_noise_reduction(True)
+            self.assertFalse(path.exists())
 
 
 if __name__ == "__main__":

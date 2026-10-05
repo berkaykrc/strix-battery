@@ -5,6 +5,7 @@ import glob
 import importlib.util
 import json
 import os
+import pathlib
 import signal
 import struct
 import subprocess
@@ -54,6 +55,12 @@ QUERY_PACKET = bytearray([
 # changes between the two states, so keep the mapping in one place rather than
 # branching at the call site.
 NOISE_REDUCTION_SUB_COMMAND = {False: 0x0C, True: 0x0D}
+
+# The firmware will not report the current noise-reduction state, so the last
+# value we sent is the only record of it. Keep it beside the other user
+# settings rather than in the working directory.
+def noise_reduction_state_path():
+    return pathlib.Path.home() / ".config" / "strix-battery" / "noise-reduction.json"
 
 
 def _load_glib():
@@ -109,6 +116,7 @@ class StrixDevice:
         self._permission_denied = False
         self._displayed_percentage = None
         self.noise_reduction = False
+        self.load_noise_reduction_state()
 
     def stabilize_percentage(self, percentage: int) -> int:
         """Hold the last reported percentage until it genuinely moves.
@@ -271,6 +279,7 @@ class StrixDevice:
 
             fcntl.ioctl(fd, HIDIOCSFEATURE_64, payload)
             self.noise_reduction = bool(enabled)
+            self.save_noise_reduction_state()
             self.notify(
                 "ROG Strix Go",
                 "Microphone noise reduction on." if enabled
@@ -281,6 +290,30 @@ class StrixDevice:
             return False
         finally:
             os.close(fd)
+
+    def load_noise_reduction_state(self):
+        """Restore the last noise-reduction value we sent.
+
+        Anything unexpected in the file means "off": the firmware has no reset
+        command, so refusing to start over a bad state file would be worse than
+        guessing.
+        """
+        try:
+            with noise_reduction_state_path().open(encoding="utf-8") as handle:
+                stored = json.load(handle)
+            self.noise_reduction = stored.get("noise_reduction") is True
+        except (OSError, ValueError, AttributeError):
+            self.noise_reduction = False
+
+    def save_noise_reduction_state(self):
+        """Persist the current value, creating the directory on first use."""
+        try:
+            path = noise_reduction_state_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("w", encoding="utf-8") as handle:
+                json.dump({"noise_reduction": self.noise_reduction}, handle)
+        except OSError:
+            pass
 
     def notify(self, title: str, msg: str):
         """Send a desktop notification through notify-send, bounded in time."""
