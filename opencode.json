@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "formatter": {
+    "ruff": {
+      "command": ["uv", "run", "--group", "dev", "ruff", "format", "$FILE"],
+      "extensions": [".py", ".pyi"]
+    }
+  },
+  "lsp": {
+    "ty": {
+      "command": ["uv", "run", "--group", "dev", "ty", "server"],
+      "extensions": [".py", ".pyi"]
+    }
+  }
+}

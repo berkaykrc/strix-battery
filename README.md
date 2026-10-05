@@ -73,9 +73,14 @@ uv run python main.py --json
 ## Development
 
 ```bash
-uv sync
+uv sync --group dev --extra fallback-tray
 uv run python -m unittest discover -s tests
+uv run --group dev ruff check .
+uv run --group dev ruff format --check .
+uv run --group dev ty check
 ```
+
+All four must pass.
 
 ## Building Distribution Packages
 

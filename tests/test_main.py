@@ -7,6 +7,7 @@ import tempfile
 import threading
 import unittest
 from types import ModuleType
+from typing import ClassVar
 from unittest.mock import patch
 
 import main
@@ -135,9 +136,7 @@ class NotifyTests(unittest.TestCase):
 
     def test_notify_swallows_a_missing_notify_send_binary(self):
         device = StrixDevice()
-        with patch(
-            "main.subprocess.run", side_effect=FileNotFoundError("notify-send")
-        ):
+        with patch("main.subprocess.run", side_effect=FileNotFoundError("notify-send")):
             device.notify("ROG Strix Go", "Battery critically low: 12%!")
 
     def test_notify_survives_a_failing_notify_send_exit_code(self):
@@ -169,8 +168,8 @@ def asus_ioctl(devinfo=ASUS_DEVINFO):
         if request == HIDIOCGRAWINFO:
             buf[:8] = devinfo
         elif request == HIDIOCGFEATURE_64:
-            buf[1] = 0x1B   # status reply marker
-            buf[9] = 0x0A   # charging
+            buf[1] = 0x1B  # status reply marker
+            buf[9] = 0x0A  # charging
             buf[11] = 0x40  # voltage LSB; 0x0F40 = 3904 mV
             buf[12] = 0x0F
             buf[21] = 0x00  # sleep seconds
@@ -184,8 +183,9 @@ class LastErrorTests(unittest.TestCase):
 
     def test_permission_denied_on_a_hidraw_node_is_reported_as_a_permission_error(self):
         device = StrixDevice()
-        with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
-            "main.os.open", side_effect=PermissionError(13, "Permission denied")
+        with (
+            patch("main.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("main.os.open", side_effect=PermissionError(13, "Permission denied")),
         ):
             self.assertIsNone(device.query())
         self.assertEqual(device.last_error, ERROR_PERMISSION)
@@ -198,38 +198,42 @@ class LastErrorTests(unittest.TestCase):
 
     def test_a_non_permission_open_failure_is_still_reported_as_offline(self):
         device = StrixDevice()
-        with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
-            "main.os.open", side_effect=OSError(19, "No such device")
+        with (
+            patch("main.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("main.os.open", side_effect=OSError(19, "No such device")),
         ):
             self.assertIsNone(device.query())
         self.assertEqual(device.last_error, ERROR_OFFLINE)
 
     def test_a_successful_query_clears_a_stale_permission_error(self):
         device = StrixDevice()
-        with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
-            "main.os.open", side_effect=PermissionError(13, "Permission denied")
+        with (
+            patch("main.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("main.os.open", side_effect=PermissionError(13, "Permission denied")),
         ):
             device.query()
         self.assertEqual(device.last_error, ERROR_PERMISSION)
 
-        with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
-            "main.os.open", return_value=7
-        ), patch("main.fcntl.ioctl", side_effect=asus_ioctl()), patch(
-            "main.time.sleep"
-        ), patch("main.os.close"):
+        with (
+            patch("main.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("main.os.open", return_value=7),
+            patch("main.fcntl.ioctl", side_effect=asus_ioctl()),
+            patch("main.time.sleep"),
+            patch("main.os.close"),
+        ):
             self.assertIsNotNone(device.query())
         self.assertIsNone(device.last_error)
 
     def test_a_denied_node_does_not_hide_the_real_receiver(self):
         device = StrixDevice()
-        with patch(
-            "main.glob.glob", return_value=["/dev/hidraw0", "/dev/hidraw1"]
-        ), patch("main.os.open", side_effect=deny_first_node), patch(
-            "main.os.close"
-        ), patch("main.fcntl.ioctl", side_effect=asus_ioctl()), patch(
-            "main.time.sleep"
+        with (
+            patch("main.glob.glob", return_value=["/dev/hidraw0", "/dev/hidraw1"]),
+            patch("main.os.open", side_effect=deny_first_node),
+            patch("main.os.close"),
+            patch("main.fcntl.ioctl", side_effect=asus_ioctl()),
+            patch("main.time.sleep"),
         ):
-            fd, path = device.find_node()
+            _fd, path = device.find_node()
         self.assertEqual(path, "/dev/hidraw1")
         self.assertFalse(device._permission_denied)
 
@@ -264,8 +268,9 @@ class PermissionHintTests(unittest.TestCase):
 
     def test_denied_nodes_plus_a_missing_dongle_still_reads_as_offline_first(self):
         device = StrixDevice()
-        with patch("main.glob.glob", return_value=["/dev/hidraw0", "/dev/hidraw1"]), patch(
-            "main.os.open", side_effect=PermissionError(13, "Permission denied")
+        with (
+            patch("main.glob.glob", return_value=["/dev/hidraw0", "/dev/hidraw1"]),
+            patch("main.os.open", side_effect=PermissionError(13, "Permission denied")),
         ):
             self.assertIsNone(device.query())
         self.assertEqual(device.last_error, ERROR_PERMISSION)
@@ -341,7 +346,7 @@ class FakeSignal:
 class RecordingAction(FakeQtWidget):
     """Records `setText` so the tray menu item's label can be asserted."""
 
-    instances = []
+    instances: ClassVar[list] = []
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -371,7 +376,7 @@ class RecordingTrayIcon(FakeQtWidget):
     """A tray icon that records the tooltip the user would actually see."""
 
     tray_available = False
-    instances = []
+    instances: ClassVar[list] = []
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -442,9 +447,11 @@ class QtTrayAvailabilityTests(unittest.TestCase):
     def test_run_pyqt_tray_exits_when_no_system_tray_host_exists(self):
         install_fake_pyqt6(self, tray_available=False)
         printed = []
-        with patch("builtins.print", side_effect=printed.append):
-            with self.assertRaises(SystemExit) as raised:
-                run_pyqt_tray(StrixDevice())
+        with (
+            patch("builtins.print", side_effect=printed.append),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            run_pyqt_tray(StrixDevice())
         self.assertEqual(raised.exception.code, 1)
         self.assertIn("no system tray", " ".join(printed).lower())
 
@@ -452,17 +459,18 @@ class QtTrayAvailabilityTests(unittest.TestCase):
         # start_tray catches ImportError and falls back to pystray, which also
         # needs a tray. SystemExit is a BaseException, so it escapes that catch.
         install_fake_pyqt6(self, tray_available=False)
-        with patch("builtins.print"):
-            with self.assertRaises(SystemExit):
-                run_pyqt_tray(StrixDevice())
+        with patch("builtins.print"), self.assertRaises(SystemExit):
+            run_pyqt_tray(StrixDevice())
 
     def test_start_tray_does_not_fall_back_to_pystray_on_a_tray_less_desktop(self):
         install_fake_pyqt6(self, tray_available=False)
-        with patch("builtins.print"), patch(
-            "main.importlib.util.find_spec", return_value=object()
-        ), patch("main.StrixTrayPystray") as tray_class:
-            with self.assertRaises(SystemExit):
-                start_tray(StrixDevice())
+        with (
+            patch("builtins.print"),
+            patch("main.importlib.util.find_spec", return_value=object()),
+            patch("main.StrixTrayPystray") as tray_class,
+            self.assertRaises(SystemExit),
+        ):
+            start_tray(StrixDevice())
         tray_class.assert_not_called()
 
 
@@ -478,9 +486,11 @@ class OfflineMessageWiringTests(unittest.TestCase):
         install_fake_pyqt6(self, tray_available=True, permissive=True)
         device = StrixDevice()
         device.last_error = ERROR_PERMISSION
-        with patch.object(device, "query", return_value=None):
-            with self.assertRaises(SystemExit):
-                run_pyqt_tray(device)
+        with (
+            patch.object(device, "query", return_value=None),
+            self.assertRaises(SystemExit),
+        ):
+            run_pyqt_tray(device)
         tray = RecordingTrayIcon.instances[-1]
         self.assertEqual(tray.tooltip, offline_message(ERROR_PERMISSION))
         self.assertTrue(tray.shown)
@@ -489,9 +499,11 @@ class OfflineMessageWiringTests(unittest.TestCase):
         install_fake_pyqt6(self, tray_available=True, permissive=True)
         device = StrixDevice()
         device.last_error = ERROR_OFFLINE
-        with patch.object(device, "query", return_value=None):
-            with self.assertRaises(SystemExit):
-                run_pyqt_tray(device)
+        with (
+            patch.object(device, "query", return_value=None),
+            self.assertRaises(SystemExit),
+        ):
+            run_pyqt_tray(device)
         tray = RecordingTrayIcon.instances[-1]
         self.assertEqual(tray.tooltip, offline_message(ERROR_OFFLINE))
 
@@ -499,15 +511,15 @@ class OfflineMessageWiringTests(unittest.TestCase):
         install_fake_pyqt6(self, tray_available=True, permissive=True)
         device = StrixDevice()
         device.last_error = ERROR_PERMISSION
-        with patch.object(device, "query", return_value=None):
-            with self.assertRaises(SystemExit):
-                run_pyqt_tray(device)
+        with (
+            patch.object(device, "query", return_value=None),
+            self.assertRaises(SystemExit),
+        ):
+            run_pyqt_tray(device)
         # Assert by membership, not by creation order, so reordering the action
         # construction does not break this.
         texts = [a.text for a in RecordingAction.instances if a.text is not None]
-        self.assertIn(
-            f"{HEADSET_ICON} {offline_message(ERROR_PERMISSION)}", texts
-        )
+        self.assertIn(f"{HEADSET_ICON} {offline_message(ERROR_PERMISSION)}", texts)
 
     def test_pystray_menu_item_carries_the_message(self):
         tray = object.__new__(StrixTrayPystray)
@@ -523,8 +535,9 @@ class OfflineMessageWiringTests(unittest.TestCase):
         tray.device = device
         tray.icon = FakePystrayIcon()
         tray._shutting_down = False
-        with patch.object(device, "query", return_value=None), patch(
-            "main.render_tray_icon", return_value=object()
+        with (
+            patch.object(device, "query", return_value=None),
+            patch("main.render_tray_icon", return_value=object()),
         ):
             tray.update_tray()
         self.assertEqual(tray.icon.title, offline_message(ERROR_PERMISSION))
@@ -713,8 +726,9 @@ class PystrayPollingTests(unittest.TestCase):
         glib = FakeGLib(dispatch_timer=True)
         main_thread = threading.get_ident()
 
-        with patch("main._load_glib", return_value=glib), patch(
-            "main.render_tray_icon", return_value=object()
+        with (
+            patch("main._load_glib", return_value=glib),
+            patch("main.render_tray_icon", return_value=object()),
         ):
             tray.start()
 
@@ -757,9 +771,11 @@ class PystrayPollingTests(unittest.TestCase):
         tray._main_loop = None
         tray._poll_source_id = None
 
-        with patch("main._load_glib", return_value=glib):
-            with self.assertRaisesRegex(RuntimeError, "main loop failed"):
-                tray.start()
+        with (
+            patch("main._load_glib", return_value=glib),
+            self.assertRaisesRegex(RuntimeError, "main loop failed"),
+        ):
+            tray.start()
 
         self.assertEqual(glib.removed_source_ids, [1])
         self.assertEqual(tray.icon.stop_count, 1)
@@ -1091,15 +1107,18 @@ class NoiseReductionPacketTests(unittest.TestCase):
         # A successful send persists the state, so point the write at
         # this test's own directory: the suite must never touch the
         # real file under ~/.config.
-        with tempfile.TemporaryDirectory() as d, patch(
-            "main.glob.glob", return_value=["/dev/hidraw0"]
-        ), patch("main.os.open", return_value=7), patch(
-            "main.fcntl.ioctl", side_effect=_ioctl
-        ), patch("main.time.sleep"), patch("main.os.close"), patch.object(
-            device, "notify"
-        ), patch(
-            "main.noise_reduction_state_path",
-            return_value=pathlib.Path(d) / "noise-reduction.json",
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch("main.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("main.os.open", return_value=7),
+            patch("main.fcntl.ioctl", side_effect=_ioctl),
+            patch("main.time.sleep"),
+            patch("main.os.close"),
+            patch.object(device, "notify"),
+            patch(
+                "main.noise_reduction_state_path",
+                return_value=pathlib.Path(d) / "noise-reduction.json",
+            ),
         ):
             self.assertTrue(device.set_noise_reduction(enabled))
 
@@ -1109,13 +1128,15 @@ class NoiseReductionPacketTests(unittest.TestCase):
     def test_enabling_sends_the_on_sub_command(self):
         packet = self.sent_packet(True)
         self.assertEqual(
-            packet[:10], bytes([0xFF, 0x08, 0x00, 0xFF, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x0D])
+            packet[:10],
+            bytes([0xFF, 0x08, 0x00, 0xFF, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x0D]),
         )
 
     def test_disabling_sends_the_off_sub_command(self):
         packet = self.sent_packet(False)
         self.assertEqual(
-            packet[:10], bytes([0xFF, 0x08, 0x00, 0xFF, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x0C])
+            packet[:10],
+            bytes([0xFF, 0x08, 0x00, 0xFF, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x0C]),
         )
 
     def test_the_packet_is_padded_to_the_report_length(self):
@@ -1148,11 +1169,14 @@ class NoiseReductionBehaviourTests(unittest.TestCase):
 
     def test_the_new_state_is_recorded_on_the_device(self):
         device = StrixDevice()
-        with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
-            "main.os.open", return_value=7
-        ), patch("main.fcntl.ioctl", side_effect=asus_ioctl()), patch(
-            "main.time.sleep"
-        ), patch("main.os.close"), patch.object(device, "notify"):
+        with (
+            patch("main.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("main.os.open", return_value=7),
+            patch("main.fcntl.ioctl", side_effect=asus_ioctl()),
+            patch("main.time.sleep"),
+            patch("main.os.close"),
+            patch.object(device, "notify"),
+        ):
             device.set_noise_reduction(True)
             self.assertTrue(device.noise_reduction)
 
@@ -1167,18 +1191,20 @@ class NoiseReductionBehaviourTests(unittest.TestCase):
 
     def test_a_denied_node_fails_without_claiming_a_state_change(self):
         device = StrixDevice()
-        with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
-            "main.os.open", side_effect=PermissionError(13, "Permission denied")
+        with (
+            patch("main.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("main.os.open", side_effect=PermissionError(13, "Permission denied")),
         ):
             self.assertFalse(device.set_noise_reduction(True))
         self.assertFalse(device.noise_reduction)
 
     def test_an_ioctl_failure_fails_without_claiming_a_state_change(self):
         device = StrixDevice()
-        with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
-            "main.os.open", return_value=7
-        ), patch("main.fcntl.ioctl", side_effect=OSError(19, "No such device")), patch(
-            "main.os.close"
+        with (
+            patch("main.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("main.os.open", return_value=7),
+            patch("main.fcntl.ioctl", side_effect=OSError(19, "No such device")),
+            patch("main.os.close"),
         ):
             self.assertFalse(device.set_noise_reduction(True))
         self.assertFalse(device.noise_reduction)
@@ -1208,7 +1234,9 @@ class NoiseReductionStateFileTests(unittest.TestCase):
     def test_a_missing_file_leaves_the_state_off(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = pathlib.Path(d)
-            with patch("main.noise_reduction_state_path", return_value=tmp / "absent.json"):
+            with patch(
+                "main.noise_reduction_state_path", return_value=tmp / "absent.json"
+            ):
                 device = StrixDevice()
                 device.load_noise_reduction_state()
             self.assertFalse(device.noise_reduction)
@@ -1236,17 +1264,17 @@ class NoiseReductionStateFileTests(unittest.TestCase):
             tmp = pathlib.Path(d)
             path = tmp / "noise_reduction.json"
             device = StrixDevice()
-            with patch("main.glob.glob", return_value=["/dev/hidraw0"]), patch(
-                "main.os.open", return_value=7
-            ), patch("main.fcntl.ioctl", side_effect=asus_ioctl()), patch(
-                "main.time.sleep"
-            ), patch("main.os.close"), patch.object(device, "notify"), patch(
-                "main.noise_reduction_state_path", return_value=path
+            with (
+                patch("main.glob.glob", return_value=["/dev/hidraw0"]),
+                patch("main.os.open", return_value=7),
+                patch("main.fcntl.ioctl", side_effect=asus_ioctl()),
+                patch("main.time.sleep"),
+                patch("main.os.close"),
+                patch.object(device, "notify"),
+                patch("main.noise_reduction_state_path", return_value=path),
             ):
                 device.set_noise_reduction(True)
-            self.assertEqual(
-                json.loads(path.read_text()), {"noise_reduction": True}
-            )
+            self.assertEqual(json.loads(path.read_text()), {"noise_reduction": True})
 
     def test_a_failed_send_writes_nothing(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1263,8 +1291,9 @@ class NoiseReductionCliTests(unittest.TestCase):
 
     def run_main(self, argv):
         out = []
-        with patch.object(sys, "argv", ["strix-battery"] + argv), patch(
-            "builtins.print", side_effect=out.append
+        with (
+            patch.object(sys, "argv", ["strix-battery", *argv]),
+            patch("builtins.print", side_effect=out.append),
         ):
             try:
                 main.main()
@@ -1274,9 +1303,10 @@ class NoiseReductionCliTests(unittest.TestCase):
 
     def test_on_prints_a_confirmation_and_exits_zero(self):
         device = StrixDevice()
-        with patch.object(main, "StrixDevice", return_value=device), patch.object(
-            device, "set_noise_reduction", return_value=True
-        ) as setter:
+        with (
+            patch.object(main, "StrixDevice", return_value=device),
+            patch.object(device, "set_noise_reduction", return_value=True) as setter,
+        ):
             code, out = self.run_main(["--noise-reduction", "on"])
         setter.assert_called_once_with(True)
         self.assertIn("noise reduction on", out[0].lower())
@@ -1284,16 +1314,18 @@ class NoiseReductionCliTests(unittest.TestCase):
 
     def test_off_turns_it_off(self):
         device = StrixDevice()
-        with patch.object(main, "StrixDevice", return_value=device), patch.object(
-            device, "set_noise_reduction", return_value=True
-        ) as setter:
+        with (
+            patch.object(main, "StrixDevice", return_value=device),
+            patch.object(device, "set_noise_reduction", return_value=True) as setter,
+        ):
             self.run_main(["--noise-reduction", "off"])
         setter.assert_called_once_with(False)
 
     def test_a_failed_send_reports_the_receiver_and_exits_one(self):
         device = StrixDevice()
-        with patch.object(main, "StrixDevice", return_value=device), patch.object(
-            device, "set_noise_reduction", return_value=False
+        with (
+            patch.object(main, "StrixDevice", return_value=device),
+            patch.object(device, "set_noise_reduction", return_value=False),
         ):
             code, out = self.run_main(["--noise-reduction", "on"])
         self.assertEqual(code, 1)
@@ -1301,11 +1333,13 @@ class NoiseReductionCliTests(unittest.TestCase):
 
     def test_an_unknown_word_is_rejected_before_any_send(self):
         device = StrixDevice()
-        with patch.object(sys, "argv", ["strix-battery", "--noise-reduction", "maybe"]), \
-             patch.object(main, "StrixDevice", return_value=device), \
-             patch.object(device, "set_noise_reduction") as setter:
-            with self.assertRaises(SystemExit) as ctx:
-                main.main()
+        with (
+            patch.object(sys, "argv", ["strix-battery", "--noise-reduction", "maybe"]),
+            patch.object(main, "StrixDevice", return_value=device),
+            patch.object(device, "set_noise_reduction") as setter,
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            main.main()
         setter.assert_not_called()
         self.assertNotEqual(ctx.exception.code, 0)
 
@@ -1329,87 +1363,79 @@ class QtNoiseReductionMenuTests(unittest.TestCase):
     def texts(self):
         return [a.text for a in RecordingAction.instances if a.text is not None]
 
-    def test_the_status_row_reports_the_current_state(self):
+    def test_the_toggle_button_shows_the_current_state(self):
         install_fake_pyqt6(self, tray_available=True, permissive=True)
         device = StrixDevice()
         device.noise_reduction = True
-        with patch.object(device, "query", return_value=None):
-            with self.assertRaises(SystemExit):
-                run_pyqt_tray(device)
+        with (
+            patch.object(device, "query", return_value=None),
+            self.assertRaises(SystemExit),
+        ):
+            run_pyqt_tray(device)
         self.assertIn(
             f"{main.NOISE_REDUCTION_ICON} Microphone Noise Reduction: On",
             self.texts(),
         )
 
-    def test_the_enable_action_turns_it_on(self):
+    def test_clicking_the_toggle_button_sends_the_opposite_state(self):
         install_fake_pyqt6(self, tray_available=True, permissive=True)
         device = StrixDevice()
         device.noise_reduction = False
-        with patch.object(device, "query", return_value=None), patch.object(
-            device, "set_noise_reduction", return_value=True
-        ) as setter:
+        with (
+            patch.object(device, "query", return_value=None),
+            patch.object(device, "set_noise_reduction", return_value=True) as setter,
+        ):
             with self.assertRaises(SystemExit):
                 run_pyqt_tray(device)
             # Fire the signal while the device is still patched:
             # outside this block the lambda would reach the real
             # set_noise_reduction instead of the recording mock.
-            enable = next(a for a in RecordingAction.instances if a.text == "Enable Noise Reduction")
-            enable.triggered.emit(False)
+            toggle = next(
+                a
+                for a in RecordingAction.instances
+                if (a.text or "").startswith(f"{main.NOISE_REDUCTION_ICON} Microphone")
+            )
+            toggle.triggered.emit(False)
         setter.assert_called_once_with(True)
-
-    def test_the_disable_action_turns_it_off(self):
-        install_fake_pyqt6(self, tray_available=True, permissive=True)
-        device = StrixDevice()
-        device.noise_reduction = True
-        with patch.object(device, "query", return_value=None), patch.object(
-            device, "set_noise_reduction", return_value=True
-        ) as setter:
-            with self.assertRaises(SystemExit):
-                run_pyqt_tray(device)
-            disable = next(a for a in RecordingAction.instances if a.text == "Disable Noise Reduction")
-            disable.triggered.emit(False)
-        setter.assert_called_once_with(False)
-
-    def test_the_checked_option_reflects_the_current_state(self):
-        install_fake_pyqt6(self, tray_available=True, permissive=True)
-        device = StrixDevice()
-        device.noise_reduction = True
-        with patch.object(device, "query", return_value=None):
-            with self.assertRaises(SystemExit):
-                run_pyqt_tray(device)
-        by_text = {a.text: a for a in RecordingAction.instances}
-        self.assertTrue(by_text["Enable Noise Reduction"].isChecked())
-        self.assertFalse(by_text["Disable Noise Reduction"].isChecked())
-
-    def test_offline_hides_the_current_value(self):
-        install_fake_pyqt6(self, tray_available=True, permissive=True)
-        device = StrixDevice()
-        with patch.object(device, "query", return_value=None):
-            with self.assertRaises(SystemExit):
-                run_pyqt_tray(device)
-        self.assertIn(
-            f"{main.NOISE_REDUCTION_ICON} Microphone Noise Reduction: -",
-            self.texts(),
-        )
 
 
 class PystrayNoiseReductionMenuTests(unittest.TestCase):
     """The Pystray fallback must match the PyQt6 menu."""
 
+    def bare_device(self, noise_reduction):
+        """A StrixDevice without running __init__, so no state file is
+        touched. The status lambdas also read these, so set them."""
+        device = StrixDevice.__new__(StrixDevice)
+        device.noise_reduction = noise_reduction
+        device.last_status = None
+        device.last_error = None
+        return device
+
     def test_the_status_text_reflects_the_device_state(self):
         tray = object.__new__(StrixTrayPystray)
-        device = FakeDevice()
-        device.noise_reduction = True
+        # Same idiom as the tray itself above: a device without
+        # running __init__, so no state file is touched.
+        device = self.bare_device(True)
         tray.device = device
         self.assertIn("On", tray.get_noise_reduction_text())
 
-    def test_the_menu_offers_on_and_off_options_and_calls_the_device(self):
-        tray = object.__new__(StrixTrayPystray)
-        device = FakeDevice()
-        device.noise_reduction = False
-        device.set_noise_reduction_calls = []
-        device.set_noise_reduction = lambda enabled: device.set_noise_reduction_calls.append(enabled)
-        tray.device = device
+    def find_toggle_item(self, menu):
+        """The toggle is the item whose text is computed from the state."""
+        found = []
+
+        def walk(items):
+            for item in items:
+                if getattr(item, "submenu", None) is not None:
+                    walk(item.submenu.items)
+                elif callable(getattr(item, "text", None)) and (
+                    "Microphone Noise Reduction" in item.text(None)
+                ):
+                    found.append(item)
+
+        walk(menu.items)
+        return found[0] if found else None
+
+    def build_menu(self, tray):
         # create_menu imports pystray at call time; point it at the
         # same fakes the other menu tests use so the built menu can be
         # introspected (real pystray keeps its action callable private).
@@ -1418,32 +1444,27 @@ class PystrayNoiseReductionMenuTests(unittest.TestCase):
         pystray.MenuItem = FakeMenuItem
 
         with patch.dict("sys.modules", {"pystray": pystray}):
-            menu = tray.create_menu()
+            return tray.create_menu()
 
-        enable = find_menu_item(menu.items, "Enable Noise Reduction")
-        disable = find_menu_item(menu.items, "Disable Noise Reduction")
-        self.assertIsNotNone(enable)
-        self.assertIsNotNone(disable)
-        enable.action()
-        disable.action()
-        self.assertEqual(device.set_noise_reduction_calls, [True, False])
-
-    def test_the_checked_option_reflects_the_device_state(self):
+    def test_the_toggle_item_text_reflects_the_device_state(self):
         tray = object.__new__(StrixTrayPystray)
-        device = FakeDevice()
-        device.noise_reduction = True
+        device = self.bare_device(True)
         tray.device = device
-        pystray = ModuleType("pystray")
-        pystray.Menu = FakeMenu
-        pystray.MenuItem = FakeMenuItem
+        menu = self.build_menu(tray)
+        toggle = self.find_toggle_item(menu)
+        self.assertIsNotNone(toggle)
+        self.assertIn("On", toggle.text(None))
 
-        with patch.dict("sys.modules", {"pystray": pystray}):
-            menu = tray.create_menu()
-
-        enable = find_menu_item(menu.items, "Enable Noise Reduction")
-        disable = find_menu_item(menu.items, "Disable Noise Reduction")
-        self.assertTrue(enable.checked(enable))
-        self.assertFalse(disable.checked(disable))
+    def test_clicking_the_toggle_sends_the_opposite_state(self):
+        tray = object.__new__(StrixTrayPystray)
+        device = self.bare_device(False)
+        tray.device = device
+        menu = self.build_menu(tray)
+        toggle = self.find_toggle_item(menu)
+        self.assertIsNotNone(toggle)
+        with patch.object(device, "set_noise_reduction", return_value=True) as setter:
+            toggle.action()
+        setter.assert_called_once_with(True)
 
 
 if __name__ == "__main__":

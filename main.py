@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import contextlib
 import fcntl
 import glob
 import importlib.util
@@ -27,9 +28,9 @@ ERROR_OFFLINE = "offline"
 ERROR_PERMISSION = "permission"
 
 # Tray glyphs as ASCII escapes so the source stays copy-pasteable and greppable.
-HEADSET_ICON = "\U0001F3A7"
-SLEEP_ICON = "\u23F1\uFE0F"
-NOISE_REDUCTION_ICON = "\U0001F507"
+HEADSET_ICON = "\U0001f3a7"
+SLEEP_ICON = "\u23f1\ufe0f"
+NOISE_REDUCTION_ICON = "\U0001f507"
 
 # `notify-send` runs on the Qt/GLib main thread, so a hung notification daemon
 # would freeze the event loop with no way out. Bound the wait.
@@ -47,15 +48,17 @@ LOW_BATTERY_NOTIFY_PERCENT = 15
 LOW_BATTERY_REARM_PERCENT = 20
 
 # 64-byte status query packet
-QUERY_PACKET = bytearray([
-    0xFF, 0x08, 0x00, 0xFD, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x01
-] + [0x00] * 54)
+QUERY_PACKET = bytearray(
+    [0xFF, 0x08, 0x00, 0xFD, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x01] + [0x00] * 54
+)
 
 # Mic noise reduction, from the packet G-Helper 0.286 sends for this headset:
 # FF 08 00 FF 04 12 F1 03 52 <0C off | 0D on>. Byte 9 is the only field that
 # changes between the two states, so keep the mapping in one place rather than
-# branching at the call site.
+# branching at the call site. Both values confirmed by live listening test:
+# on removes background noise, off brings it back.
 NOISE_REDUCTION_SUB_COMMAND = {False: 0x0C, True: 0x0D}
+
 
 # The firmware will not report the current noise-reduction state, so the last
 # value we sent is the only record of it. Keep it beside the other user
@@ -65,7 +68,9 @@ def noise_reduction_state_path():
 
 
 def _load_glib():
-    from gi.repository import GLib
+    # Optional runtime dep; every caller catches ImportError.
+    from gi.repository import GLib  # ty: ignore[unresolved-import]
+
     return GLib
 
 
@@ -176,7 +181,7 @@ class StrixDevice:
             try:
                 buf = bytearray(8)
                 fcntl.ioctl(fd, HIDIOCGRAWINFO, buf)
-                _, vid, pid = struct.unpack('<Ihh', buf)
+                _, vid, pid = struct.unpack("<Ihh", buf)
                 if (vid & 0xFFFF) == ASUS_VID and (pid & 0xFFFF) in STRIX_PIDS:
                     # We found it, so a denied node elsewhere is irrelevant.
                     self._permission_denied = False
@@ -214,7 +219,7 @@ class StrixDevice:
 
             voltage_mv = (buf[12] << 8) | buf[11]
             pct = self.stabilize_percentage(mv_to_percent(voltage_mv))
-            charging = (buf[9] == 0x0A)
+            charging = buf[9] == 0x0A
             sleep_sec = (buf[22] << 8) | buf[21]
 
             status = {
@@ -222,7 +227,7 @@ class StrixDevice:
                 "voltage": voltage_mv,
                 "charging": charging,
                 "sleep_min": sleep_sec // 60,
-                "path": path
+                "path": path,
             }
             self.last_status = status
             self.last_error = None
@@ -252,10 +257,23 @@ class StrixDevice:
             sec_lsb = seconds & 0xFF
             sec_msb = (seconds >> 8) & 0xFF
 
-            payload = bytearray([
-                0xFF, 0x0A, 0x00, 0xFF, 0x04, 0x12, 0xF1, 0x05, 0x52, 0x0B,
-                sec_lsb, sec_msb
-            ] + [0x00] * 52)
+            payload = bytearray(
+                [
+                    0xFF,
+                    0x0A,
+                    0x00,
+                    0xFF,
+                    0x04,
+                    0x12,
+                    0xF1,
+                    0x05,
+                    0x52,
+                    0x0B,
+                    sec_lsb,
+                    sec_msb,
+                ]
+                + [0x00] * 52
+            )
 
             fcntl.ioctl(fd, HIDIOCSFEATURE_64, payload)
             self.notify("ROG Strix Go", f"Sleep timer set to {minutes} minutes.")
@@ -278,18 +296,30 @@ class StrixDevice:
             return False
 
         try:
-            payload = bytearray([
-                0xFF, 0x08, 0x00, 0xFF, 0x04, 0x12, 0xF1, 0x03, 0x52,
-                NOISE_REDUCTION_SUB_COMMAND[bool(enabled)]
-            ] + [0x00] * 54)
+            payload = bytearray(
+                [
+                    0xFF,
+                    0x08,
+                    0x00,
+                    0xFF,
+                    0x04,
+                    0x12,
+                    0xF1,
+                    0x03,
+                    0x52,
+                    NOISE_REDUCTION_SUB_COMMAND[bool(enabled)],
+                ]
+                + [0x00] * 54
+            )
 
             fcntl.ioctl(fd, HIDIOCSFEATURE_64, payload)
             self.noise_reduction = bool(enabled)
             self.save_noise_reduction_state()
             self.notify(
                 "ROG Strix Go",
-                "Microphone noise reduction on." if enabled
-                else "Microphone noise reduction off."
+                "Microphone noise reduction on."
+                if enabled
+                else "Microphone noise reduction off.",
             )
             return True
         except OSError:
@@ -323,17 +353,15 @@ class StrixDevice:
 
     def notify(self, title: str, msg: str):
         """Send a desktop notification through notify-send, bounded in time."""
-        try:
+        # notify-send may be missing (FileNotFoundError) or its daemon hung
+        # (TimeoutExpired, a SubprocessError): either way, skip the note
+        # rather than stalling the tray.
+        with contextlib.suppress(FileNotFoundError, subprocess.SubprocessError):
             subprocess.run(
                 ["notify-send", title, msg, "-i", "audio-headset"],
                 check=False,
                 timeout=NOTIFY_TIMEOUT_SECONDS,
             )
-        except (FileNotFoundError, subprocess.SubprocessError):
-            # FileNotFoundError: notify-send is not installed.
-            # SubprocessError covers TimeoutExpired, so a hung daemon can only
-            # stall the tray briefly instead of freezing it permanently.
-            pass
 
 
 def render_tray_icon(percentage: int, charging: bool, connected: bool):
@@ -346,7 +374,9 @@ def render_tray_icon(percentage: int, charging: bool, connected: bool):
 
     if not connected:
         # Draw a gray headset with a red cross when disconnected.
-        draw.arc([24, 16, 104, 96], start=180, end=0, fill=(130, 130, 130, 200), width=10)
+        draw.arc(
+            [24, 16, 104, 96], start=180, end=0, fill=(130, 130, 130, 200), width=10
+        )
         draw.rounded_rectangle([16, 44, 38, 92], radius=8, fill=(100, 100, 100, 200))
         draw.rounded_rectangle([90, 44, 112, 92], radius=8, fill=(100, 100, 100, 200))
         draw.line([20, 20, 108, 108], fill=(230, 50, 50, 240), width=10)
@@ -354,13 +384,13 @@ def render_tray_icon(percentage: int, charging: bool, connected: bool):
 
     # Select a color for the current battery state.
     if charging:
-        theme_color = (0, 190, 255)      # Charging: neon cyan
+        theme_color = (0, 190, 255)  # Charging: neon cyan
     elif percentage > 40:
-        theme_color = (60, 220, 70)      # >40%: vivid green
+        theme_color = (60, 220, 70)  # >40%: vivid green
     elif percentage > 15:
-        theme_color = (255, 175, 20)     # 16-40%: orange
+        theme_color = (255, 175, 20)  # 16-40%: orange
     else:
-        theme_color = (240, 50, 50)      # <=15%: critical red
+        theme_color = (240, 50, 50)  # <=15%: critical red
 
     # 1. Headband (double layer for background contrast).
     draw.arc([22, 14, 106, 98], start=180, end=0, fill=(20, 20, 20, 240), width=14)
@@ -374,20 +404,23 @@ def render_tray_icon(percentage: int, charging: bool, connected: bool):
     draw.rounded_rectangle([91, 45, 111, 91], radius=7, fill=theme_color)
 
     # 3. Lower section: battery capsule.
-    draw.rounded_rectangle([20, 96, 102, 122], radius=6, outline=(20, 20, 20, 240), width=4)
-    draw.rounded_rectangle([22, 98, 100, 120], radius=5, outline=(240, 240, 240, 255), width=2)
+    draw.rounded_rectangle(
+        [20, 96, 102, 122], radius=6, outline=(20, 20, 20, 240), width=4
+    )
+    draw.rounded_rectangle(
+        [22, 98, 100, 120], radius=5, outline=(240, 240, 240, 255), width=2
+    )
     draw.rectangle([102, 104, 108, 114], fill=(240, 240, 240, 255))
 
     fill_width = int(72 * (percentage / 100))
     if fill_width > 0:
-        draw.rounded_rectangle([25, 101, 25 + fill_width, 117], radius=3, fill=theme_color)
+        draw.rounded_rectangle(
+            [25, 101, 25 + fill_width, 117], radius=3, fill=theme_color
+        )
 
     # 4. Center: lightning bolt while charging or a large percentage on battery.
     if charging:
-        bolt_points = [
-            (68, 28), (50, 58), (64, 58),
-            (58, 88), (80, 52), (66, 52)
-        ]
+        bolt_points = [(68, 28), (50, 58), (64, 58), (58, 88), (80, 52), (66, 52)]
         draw.polygon(bolt_points, fill=(0, 190, 255))
         inner_bolt = [(x + (1 if x < 64 else -1), y) for x, y in bolt_points]
         draw.polygon(inner_bolt, fill=(255, 255, 255))
@@ -397,7 +430,7 @@ def render_tray_icon(percentage: int, charging: bool, connected: bool):
             "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/liberation-sans/LiberationSans-Bold.ttf",
             "/usr/share/fonts/cantarell/Cantarell-VF.otf",
-            "/usr/share/fonts/google-noto/NotoSans-Bold.ttf"
+            "/usr/share/fonts/google-noto/NotoSans-Bold.ttf",
         ]
         for fp in font_paths:
             if os.path.exists(fp):
@@ -417,7 +450,16 @@ def render_tray_icon(percentage: int, charging: bool, connected: bool):
         ty = 42 + (40 - th) // 2
 
         # Add a thick black shadow to improve readability.
-        for ox, oy in [(-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1), (-1, 1), (1, -1)]:
+        for ox, oy in [
+            (-2, 0),
+            (2, 0),
+            (0, -2),
+            (0, 2),
+            (-1, -1),
+            (1, 1),
+            (-1, 1),
+            (1, -1),
+        ]:
             draw.text((tx + ox, ty + oy), txt, fill=(0, 0, 0, 255), font=font)
         draw.text((tx, ty), txt, fill=(255, 255, 255, 255), font=font)
 
@@ -427,6 +469,7 @@ def render_tray_icon(percentage: int, charging: bool, connected: bool):
 def pil_to_qpixmap(pil_img):
     """Convert a Pillow image directly to a Qt QPixmap."""
     from PyQt6.QtGui import QImage, QPixmap
+
     img = pil_img.convert("RGBA")
     data = img.tobytes("raw", "RGBA")
     qimg = QImage(data, img.width, img.height, QImage.Format.Format_RGBA8888)
@@ -484,9 +527,18 @@ def run_pyqt_tray(device: StrixDevice):
     sleep_action.setEnabled(False)
     menu.addAction(sleep_action)
 
-    noise_action = QAction(f"{NOISE_REDUCTION_ICON} Microphone Noise Reduction: -", menu)
-    noise_action.setEnabled(False)
-    menu.addAction(noise_action)
+    # A single two-state button: its label shows the current state, so
+    # no separate status row is needed, and one click flips it.
+    noise_toggle_action = QAction(
+        f"{NOISE_REDUCTION_ICON} Microphone Noise Reduction: -", menu
+    )
+    noise_toggle_action.triggered.connect(
+        lambda checked=False: (
+            device.set_noise_reduction(not device.noise_reduction),
+            update_state(),
+        )
+    )
+    menu.addAction(noise_toggle_action)
 
     menu.addSeparator()
 
@@ -496,29 +548,14 @@ def run_pyqt_tray(device: StrixDevice):
         (5, "5 Minutes"),
         (10, "10 Minutes"),
         (15, "15 Minutes"),
-        (30, "30 Minutes")
+        (30, "30 Minutes"),
     ]:
         action = QAction(label, sleep_menu)
-        action.triggered.connect(lambda checked=False, m=mins: (device.set_sleep(m), update_state()))
+        action.triggered.connect(
+            lambda checked=False, m=mins: (device.set_sleep(m), update_state())
+        )
         sleep_menu.addAction(action)
     menu.addMenu(sleep_menu)
-
-    noise_menu = QMenu("Microphone Noise Reduction", menu)
-    # Two checkable options instead of a blind toggle: the user sees
-    # which state is active without having to reason about opposites.
-    enable_action = QAction("Enable Noise Reduction", noise_menu)
-    enable_action.setCheckable(True)
-    enable_action.triggered.connect(
-        lambda checked=False: (device.set_noise_reduction(True), update_state())
-    )
-    noise_menu.addAction(enable_action)
-    disable_action = QAction("Disable Noise Reduction", noise_menu)
-    disable_action.setCheckable(True)
-    disable_action.triggered.connect(
-        lambda checked=False: (device.set_noise_reduction(False), update_state())
-    )
-    noise_menu.addAction(disable_action)
-    menu.addMenu(noise_menu)
 
     menu.addSeparator()
 
@@ -543,27 +580,20 @@ def run_pyqt_tray(device: StrixDevice):
 
             status_action.setText(f"🎧 Battery: {pct}% ({v} mV - {power_status})")
             sleep_action.setText(f"⏱️ Sleep Timer: {slp} minutes")
-            noise_action.setText(
+            noise_toggle_action.setText(
                 f"{NOISE_REDUCTION_ICON} Microphone Noise Reduction: "
                 f"{'On' if device.noise_reduction else 'Off'}"
             )
-            enable_action.setChecked(device.noise_reduction)
-            disable_action.setChecked(not device.noise_reduction)
             tooltip = f"ROG Strix Go 2.4: {pct}% ({power_status})\nVoltage: {v} mV\nSleep timer: {slp} min"
             icon_img = render_tray_icon(pct, chg, connected=True)
         else:
             message = offline_message(device.last_error)
             status_action.setText(f"{HEADSET_ICON} {message}")
             sleep_action.setText(f"{SLEEP_ICON} Sleep Timer: -")
-            # The setting persists in the headset, so a stored "on"
-            # stays a positive record even when nothing answers; "off"
-            # and "never set" are indistinguishable, so show "-" for both.
-            noise_action.setText(
+            noise_toggle_action.setText(
                 f"{NOISE_REDUCTION_ICON} Microphone Noise Reduction: "
-                f"{'On' if device.noise_reduction else '-'}"
+                f"{'On' if device.noise_reduction else 'Off'}"
             )
-            enable_action.setChecked(device.noise_reduction)
-            disable_action.setChecked(not device.noise_reduction)
             tooltip = message
             icon_img = render_tray_icon(0, False, connected=False)
 
@@ -589,6 +619,7 @@ class StrixTrayPystray:
 
     def __init__(self, device: StrixDevice):
         import pystray
+
         self.device = device
         self.icon = pystray.Icon("strix_go")
         self.icon.menu = self.create_menu()
@@ -618,31 +649,33 @@ class StrixTrayPystray:
     def create_menu(self):
         from pystray import Menu
         from pystray import MenuItem as item
+
         return Menu(
             item(lambda text: self.get_status_text(), None, enabled=False),
             item(lambda text: self.get_sleep_text(), None, enabled=False),
-            item(lambda text: self.get_noise_reduction_text(), None, enabled=False),
             Menu.SEPARATOR,
-            item("Automatic Sleep Timer", Menu(
-                item("Never Turn Off (0 min)", lambda: self.device.set_sleep(0)),
-                item("5 Minutes", lambda: self.device.set_sleep(5)),
-                item("10 Minutes", lambda: self.device.set_sleep(10)),
-                item("15 Minutes", lambda: self.device.set_sleep(15)),
-                item("30 Minutes", lambda: self.device.set_sleep(30)),
-            )),
-            item("Microphone Noise Reduction", Menu(
-                item("Enable Noise Reduction",
-                     lambda: self.device.set_noise_reduction(True),
-                     checked=lambda item: self.device.noise_reduction,
-                     radio=True),
-                item("Disable Noise Reduction",
-                     lambda: self.device.set_noise_reduction(False),
-                     checked=lambda item: not self.device.noise_reduction,
-                     radio=True),
-            )),
+            item(
+                "Automatic Sleep Timer",
+                Menu(
+                    item("Never Turn Off (0 min)", lambda: self.device.set_sleep(0)),
+                    item("5 Minutes", lambda: self.device.set_sleep(5)),
+                    item("10 Minutes", lambda: self.device.set_sleep(10)),
+                    item("15 Minutes", lambda: self.device.set_sleep(15)),
+                    item("30 Minutes", lambda: self.device.set_sleep(30)),
+                ),
+            ),
+            # A single two-state button: its label shows the current
+            # state, so no separate status row is needed, and one
+            # click flips it.
+            item(
+                lambda text: self.get_noise_reduction_text(),
+                lambda: self.device.set_noise_reduction(
+                    not self.device.noise_reduction
+                ),
+            ),
             item("Refresh Now", lambda: self.update_tray()),
             Menu.SEPARATOR,
-            item("Quit", lambda: self.quit())
+            item("Quit", lambda: self.quit()),
         )
 
     def update_tray(self):
@@ -725,7 +758,10 @@ def start_tray(device: StrixDevice):
         except ImportError:
             print("Info: PyQt6 could not be used, starting with Pystray.")
 
-    if importlib.util.find_spec("pystray") is not None and importlib.util.find_spec("PIL") is not None:
+    if (
+        importlib.util.find_spec("pystray") is not None
+        and importlib.util.find_spec("PIL") is not None
+    ):
         print("Info: PyQt6 was not found, starting with Pystray.")
         print("For a smoother experience and native context menu, run: uv add PyQt6\n")
         app = StrixTrayPystray(device)
@@ -743,23 +779,24 @@ def main():
         description="ASUS ROG Strix Go 2.4 - Battery and sleep manager"
     )
     parser.add_argument(
-        "-t", "--tray",
-        action="store_true",
-        help="Start the system tray application"
+        "-t", "--tray", action="store_true", help="Start the system tray application"
     )
     parser.add_argument(
-        "-j", "--json",
+        "-j",
+        "--json",
         action="store_true",
-        help="Print JSON output for Waybar or desktop panels"
+        help="Print JSON output for Waybar or desktop panels",
     )
     parser.add_argument(
-        "-s", "--set-sleep",
+        "-s",
+        "--set-sleep",
         type=int,
         metavar="MINUTES",
-        help=f"Set the automatic sleep timer (0-{MAX_SLEEP_MINUTES} minutes; 0 = disabled)"
+        help=f"Set the automatic sleep timer (0-{MAX_SLEEP_MINUTES} minutes; 0 = disabled)",
     )
     parser.add_argument(
-        "-n", "--noise-reduction",
+        "-n",
+        "--noise-reduction",
         choices=["on", "off"],
         metavar="STATE",
         help="Set the microphone AI noise reduction (on or off)",
@@ -792,8 +829,11 @@ def main():
     if args.noise_reduction is not None:
         enabled = args.noise_reduction == "on"
         if device.set_noise_reduction(enabled):
-            print("Microphone noise reduction on." if enabled
-                  else "Microphone noise reduction off.")
+            print(
+                "Microphone noise reduction on."
+                if enabled
+                else "Microphone noise reduction off."
+            )
         else:
             print("Error: Headset receiver could not be reached.")
             sys.exit(1)
@@ -807,14 +847,18 @@ def main():
             print(json.dumps({"status": "offline", "text": "Headset offline"}))
         else:
             charge_str = " (Charging)" if st["charging"] else ""
-            print(json.dumps({
-                "status": "online",
-                "percentage": st["percentage"],
-                "voltage": st["voltage"],
-                "charging": st["charging"],
-                "sleep_min": st["sleep_min"],
-                "text": f"%{st['percentage']}{charge_str}"
-            }))
+            print(
+                json.dumps(
+                    {
+                        "status": "online",
+                        "percentage": st["percentage"],
+                        "voltage": st["voltage"],
+                        "charging": st["charging"],
+                        "sleep_min": st["sleep_min"],
+                        "text": f"%{st['percentage']}{charge_str}",
+                    }
+                )
+            )
         return
 
     # Default terminal report.

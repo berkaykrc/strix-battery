@@ -17,9 +17,45 @@ fallback-tray = [
     "pystray>=0.19.5",
 ]
 
+[dependency-groups]
+dev = [
+    "ruff>=0.16",
+    "ty>=0.0.84",
+]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 py-modules = ["main"]
+
+[tool.ruff]
+target-version = "py312"
+# Historical session plans under docs/ are not shipped code; their fenced
+# code blocks are illustrations, not gates.
+exclude = ["docs"]
+
+[tool.ruff.lint]
+# E4/E7/E9/F: syntax and logic errors. I/UP/B/W/SIM/RUF: import order,
+# py3.12 idioms, bug-prone patterns, simplifications, Ruff-specific rules.
+# N is out: the Qt/PyQt API the fakes mirror (setText, setCheckable, ...)
+# is camelCase by design, and flagging it would fight the toolkit.
+# C is out: render_tray_icon is long because drawing is verbose, not
+# because it branches; splitting it would scatter one picture over helpers.
+# E501 is out: the formatter owns code layout, and it cannot split long
+# string literals (packet bytes, help texts). Line length stays a matter
+# of review judgment, not a gate.
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "W", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.ty]
+# ty discovers requires-python (>=3.12) on its own; only test-only
+# relaxations live here. Production code must check clean.
+
+[[tool.ty.overrides]]
+# The tray tests drive PyQt6/pystray through hand-built fakes and assign
+# them where the real classes go. That dynamic trickery is the point of
+# the harness, so the rules that forbid it stay off for tests only.
+include = ["tests/**"]
+rules = { "invalid-assignment" = "ignore", "unresolved-attribute" = "ignore", "call-non-callable" = "ignore" }
