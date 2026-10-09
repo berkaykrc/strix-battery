@@ -19,7 +19,7 @@ HIDIOCSFEATURE_64 = 0xC0404806
 HIDIOCGFEATURE_64 = 0xC0404807
 
 ASUS_VID = 0x0B05
-STRIX_PIDS = [0x18D6, 0x18D7]  # 0x18D6: Kablosuz Dongle, 0x18D7: Kablolu Mod
+STRIX_PIDS = [0x18D6, 0x18D7]  # 0x18D6: wireless dongle, 0x18D7: wired mode
 MAX_SLEEP_MINUTES = 1092
 
 # Why the last query produced no status. Distinguishing these lets the tray
@@ -47,7 +47,6 @@ BATTERY_DISPLAY_DEADBAND_PERCENT = 2
 LOW_BATTERY_NOTIFY_PERCENT = 15
 LOW_BATTERY_REARM_PERCENT = 20
 
-# 64-byte status query packet
 QUERY_PACKET = bytearray(
     [0xFF, 0x08, 0x00, 0xFD, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x01] + [0x00] * 54
 )
@@ -290,11 +289,9 @@ class StrixDevice:
             return None
 
         try:
-            # Send the status query.
             fcntl.ioctl(fd, HIDIOCSFEATURE_64, QUERY_PACKET)
             time.sleep(0.04)
 
-            # Read the response packet (report ID: 0xFF).
             buf = bytearray([0xFF] + [0x00] * 63)
             fcntl.ioctl(fd, HIDIOCGFEATURE_64, buf)
 
@@ -459,7 +456,6 @@ def render_tray_icon(percentage: int, charging: bool, connected: bool):
     draw = ImageDraw.Draw(img)
 
     if not connected:
-        # Draw a gray headset with a red cross when disconnected.
         draw.arc(
             [24, 16, 104, 96], start=180, end=0, fill=(130, 130, 130, 200), width=10
         )
@@ -468,7 +464,6 @@ def render_tray_icon(percentage: int, charging: bool, connected: bool):
         draw.line([20, 20, 108, 108], fill=(230, 50, 50, 240), width=10)
         return img
 
-    # Select a color for the current battery state.
     if charging:
         theme_color = (0, 190, 255)  # Charging: neon cyan
     elif percentage > 40:
@@ -478,18 +473,15 @@ def render_tray_icon(percentage: int, charging: bool, connected: bool):
     else:
         theme_color = (240, 50, 50)  # <=15%: critical red
 
-    # 1. Headband (double layer for background contrast).
     draw.arc([22, 14, 106, 98], start=180, end=0, fill=(20, 20, 20, 240), width=14)
     draw.arc([24, 16, 104, 96], start=180, end=0, fill=(240, 240, 240, 255), width=10)
 
-    # 2. Ear cushions.
     draw.rounded_rectangle([14, 42, 40, 94], radius=10, fill=(20, 20, 20, 240))
     draw.rounded_rectangle([17, 45, 37, 91], radius=7, fill=theme_color)
 
     draw.rounded_rectangle([88, 42, 114, 94], radius=10, fill=(20, 20, 20, 240))
     draw.rounded_rectangle([91, 45, 111, 91], radius=7, fill=theme_color)
 
-    # 3. Lower section: battery capsule.
     draw.rounded_rectangle(
         [20, 96, 102, 122], radius=6, outline=(20, 20, 20, 240), width=4
     )
@@ -504,7 +496,6 @@ def render_tray_icon(percentage: int, charging: bool, connected: bool):
             [25, 101, 25 + fill_width, 117], radius=3, fill=theme_color
         )
 
-    # 4. Center: lightning bolt while charging or a large percentage on battery.
     if charging:
         bolt_points = [(68, 28), (50, 58), (64, 58), (58, 88), (80, 52), (66, 52)]
         draw.polygon(bolt_points, fill=(0, 190, 255))
@@ -535,7 +526,6 @@ def render_tray_icon(percentage: int, charging: bool, connected: bool):
         tx = (128 - tw) // 2
         ty = 42 + (40 - th) // 2
 
-        # Add a thick black shadow to improve readability.
         for ox, oy in [
             (-2, 0),
             (2, 0),
@@ -702,7 +692,6 @@ def run_pyqt_tray(device: StrixDevice):
         update_state()
         tray.show()
 
-        # Her 15 saniyede bir otomatik sorgula
         refresh_timer.timeout.connect(poll)
         refresh_timer.start(15000)
 
@@ -753,12 +742,10 @@ def main():
 
     device = StrixDevice()
 
-    # 1. Tepsi Modu
     if args.tray:
         start_tray(device)
         return
 
-    # 2. Set the sleep timer.
     if args.set_sleep is not None:
         try:
             validate_sleep_minutes(args.set_sleep)
@@ -773,7 +760,6 @@ def main():
             sys.exit(1)
         return
 
-    # 2b. Toggle the microphone noise reduction.
     if args.noise_reduction is not None:
         enabled = args.noise_reduction == "on"
         if device.set_noise_reduction(enabled):
@@ -787,7 +773,6 @@ def main():
             sys.exit(1)
         return
 
-    # 3. Query status (CLI/JSON).
     st = device.query()
 
     if args.json:
@@ -809,7 +794,6 @@ def main():
             )
         return
 
-    # Default terminal report.
     if not st:
         print("ROG Strix Go 2.4 receiver or headset is offline/out of range.")
         sys.exit(1)
