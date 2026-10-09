@@ -3,7 +3,6 @@ import argparse
 import contextlib
 import fcntl
 import glob
-import importlib.util
 import itertools
 import json
 import os
@@ -66,13 +65,6 @@ NOISE_REDUCTION_SUB_COMMAND = {False: 0x0C, True: 0x0D}
 # settings rather than in the working directory.
 def noise_reduction_state_path():
     return pathlib.Path.home() / ".config" / "strix-battery" / "noise-reduction.json"
-
-
-def _load_glib():
-    # Optional runtime dep; every caller catches ImportError.
-    from gi.repository import GLib  # ty: ignore[unresolved-import]
-
-    return GLib
 
 
 def validate_sleep_minutes(minutes: int) -> int:
@@ -599,8 +591,8 @@ def run_pyqt_tray(device: StrixDevice):
     if not QSystemTrayIcon.isSystemTrayAvailable():
         # Without a StatusNotifierItem host the icon never appears and the
         # process would sit in app.exec() forever with no window and no menu.
-        # SystemExit, not ImportError: start_tray only catches ImportError, and
-        # the pystray fallback needs a tray just as much.
+        # Exit rather than continue: there is no second backend to try, and a
+        # headless process would look like a working tray to the user.
         print(
             "Error: no system tray was found on this desktop.\n"
             "Qt could not reach a StatusNotifierItem host, so the tray icon "
@@ -697,175 +689,37 @@ def run_pyqt_tray(device: StrixDevice):
 
     refresh_timer = QTimer()
 
+    def poll():
+        # Desktop environments hide the tray icon when a fullscreen menu opens.
+        # Querying the device every 15 seconds while nothing is on screen is
+        # pure waste, so skip until the icon is back. The guard belongs here
+        # and not in update_state: initialize_tray refreshes before show().
+        if not tray.isVisible():
+            return
+        update_state()
+
     def initialize_tray():
         update_state()
         tray.show()
 
         # Her 15 saniyede bir otomatik sorgula
-        refresh_timer.timeout.connect(update_state)
+        refresh_timer.timeout.connect(poll)
         refresh_timer.start(15000)
 
     sys.exit(_run_qt_app_with_sigint_shutdown(app, QTimer, initialize_tray))
 
 
-class StrixTrayPystray:
-    """Manage the Pystray-based fallback tray application."""
-
-    def __init__(self, device: StrixDevice):
-        import pystray
-
-        self.device = device
-        self.icon = pystray.Icon("strix_go")
-        self.icon.menu = self.create_menu()
-        self._glib = None
-        self._main_loop = None
-        self._poll_source_id = None
-        self._shutting_down = False
-        self.update_tray()
-
-    def get_status_text(self):
-        st = self.device.last_status
-        if not st:
-            return offline_message(self.device.last_error)
-        power_status = "Charging" if st["charging"] else "On battery"
-        return f"Battery: {st['percentage']}% ({st['voltage']} mV - {power_status})"
-
-    def get_sleep_text(self):
-        st = self.device.last_status
-        if not st:
-            return "Sleep Timer: -"
-        return f"Sleep Timer: {st['sleep_min']} minutes"
-
-    def get_noise_reduction_text(self):
-        state = "On" if self.device.noise_reduction else "Off"
-        return f"Microphone Noise Reduction: {state}"
-
-    def create_menu(self):
-        from pystray import Menu
-        from pystray import MenuItem as item
-
-        return Menu(
-            item(lambda text: self.get_status_text(), None, enabled=False),
-            item(lambda text: self.get_sleep_text(), None, enabled=False),
-            Menu.SEPARATOR,
-            item(
-                "Automatic Sleep Timer",
-                Menu(
-                    item("Never Turn Off (0 min)", lambda: self.device.set_sleep(0)),
-                    item("5 Minutes", lambda: self.device.set_sleep(5)),
-                    item("10 Minutes", lambda: self.device.set_sleep(10)),
-                    item("15 Minutes", lambda: self.device.set_sleep(15)),
-                    item("30 Minutes", lambda: self.device.set_sleep(30)),
-                ),
-            ),
-            # A single two-state button: its label shows the current
-            # state, so no separate status row is needed, and one
-            # click flips it.
-            item(
-                lambda text: self.get_noise_reduction_text(),
-                lambda: self.device.set_noise_reduction(
-                    not self.device.noise_reduction
-                ),
-            ),
-            item("Refresh Now", lambda: self.update_tray()),
-            Menu.SEPARATOR,
-            item("Quit", lambda: self.quit()),
-        )
-
-    def update_tray(self):
-        if self._shutting_down:
-            return
-        st = self.device.query()
-        if self._shutting_down:
-            return
-        if st:
-            pct = st["percentage"]
-            self.icon.icon = render_tray_icon(pct, st["charging"], connected=True)
-            self.icon.title = f"ROG Strix Go: {pct}% ({'Charging' if st['charging'] else 'On battery'})"
-        else:
-            self.icon.icon = render_tray_icon(0, False, connected=False)
-            self.icon.title = offline_message(self.device.last_error)
-
-    def quit(self):
-        if self._shutting_down:
-            return
-        self._shutting_down = True
-        source_id = self._poll_source_id
-        self._poll_source_id = None
-        try:
-            if self._glib is not None and source_id is not None:
-                self._glib.source_remove(source_id)
-        finally:
-            try:
-                self.icon.stop()
-            finally:
-                if self._main_loop is not None:
-                    main_loop = self._main_loop
-                    self._main_loop = None
-                    main_loop.quit()
-
-    def poll(self):
-        if self._shutting_down or not self.icon.visible:
-            self._poll_source_id = None
-            return False
-        try:
-            self.update_tray()
-        except Exception:
-            self._poll_source_id = None
-            raise
-        if self._shutting_down:
-            self._poll_source_id = None
-            return False
-        return True
-
-    def start(self):
-        self._shutting_down = False
-        self._glib = None
-        self._main_loop = None
-        self._poll_source_id = None
-        try:
-            glib = _load_glib()
-        except ImportError:
-            print("Info: GLib is unavailable; automatic tray refresh is disabled.")
-            try:
-                self.icon.run()
-            finally:
-                self.quit()
-            return
-
-        self._glib = glib
-        try:
-            self._main_loop = glib.MainLoop()
-            self.icon.run_detached()
-            self._poll_source_id = glib.timeout_add_seconds(15, self.poll)
-            self._main_loop.run()
-        finally:
-            self.quit()
-
-
 def start_tray(device: StrixDevice):
-    """Prefer PyQt6 and fall back to Pystray when necessary."""
-    if importlib.util.find_spec("PyQt6") is not None:
-        try:
-            run_pyqt_tray(device)
-            return
-        except ImportError:
-            print("Info: PyQt6 could not be used, starting with Pystray.")
-
-    if (
-        importlib.util.find_spec("pystray") is not None
-        and importlib.util.find_spec("PIL") is not None
-    ):
-        print("Info: PyQt6 was not found, starting with Pystray.")
-        print("For a smoother experience and native context menu, run: uv add PyQt6\n")
-        app = StrixTrayPystray(device)
-        app.start()
-        return
-
-    print("\nError: 'PyQt6' is required for tray mode.")
-    print("Install it by running:")
-    print("  uv add PyQt6 pillow\n")
-    sys.exit(1)
+    """Run the PyQt6 tray, or explain that it is unavailable."""
+    try:
+        run_pyqt_tray(device)
+    except ImportError:
+        # The only import that can fail here is PyQt6 itself: pillow ships in
+        # the base dependencies and a tray needs it to draw the icon.
+        print("\nError: 'PyQt6' is required for tray mode.")
+        print("Install it by running:")
+        print("  uv add PyQt6 pillow\n")
+        sys.exit(1)
 
 
 def main():

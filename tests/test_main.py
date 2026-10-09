@@ -7,7 +7,6 @@ import struct
 import subprocess
 import sys
 import tempfile
-import threading
 import unittest
 from types import ModuleType
 from typing import ClassVar
@@ -23,7 +22,6 @@ from main import (
     MAX_SLEEP_MINUTES,
     NOTIFY_TIMEOUT_SECONDS,
     StrixDevice,
-    StrixTrayPystray,
     mv_to_percent,
     offline_message,
     run_pyqt_tray,
@@ -397,18 +395,58 @@ class RecordingTrayIcon(FakeQtWidget):
     def show(self):
         self.shown = True
 
+    def isVisible(self):
+        return self.shown
 
-def install_fake_pyqt6(testcase, tray_available, permissive=False):
+
+class _ConnectableSignal:
+    """A signal stub that records what the production code connects to it."""
+
+    def __init__(self, owner):
+        self._owner = owner
+
+    def connect(self, callback):
+        self._owner.timeout_callbacks.append(callback)
+
+
+class RecordingTimer:
+    """Captures the refresh-timer connection so a test can fire the poll."""
+
+    instances: ClassVar[list] = []
+
+    def __init__(self):
+        self.timeout_callbacks = []
+        self.scheduled = []
+        self.started_with = None
+        self.timeout = _ConnectableSignal(self)
+        RecordingTimer.instances.append(self)
+
+    def start(self, interval):
+        self.started_with = interval
+
+    def singleShot(self, delay, callback):
+        self.scheduled.append((delay, callback))
+
+    def fire_timeout(self):
+        for callback in self.timeout_callbacks:
+            callback()
+
+
+def install_fake_pyqt6(testcase, tray_available, permissive=False, timer=None):
     """Point every `from PyQt6...` import in `main` at in-memory fakes.
 
     `permissive=False` keeps the strict bare-`type()` stubs, which die the moment
     real widget construction starts. That strictness is what proves the
     tray-availability guard is load-bearing. `permissive=True` swaps in
     `FakeQtWidget` so the code can run past that point.
+
+    `timer` overrides the `QTimer` class so a test can fire the refresh poll;
+    the permissive fake swallows every call, which is fine everywhere else.
     """
     RecordingTrayIcon.tray_available = tray_available
     RecordingTrayIcon.instances = []
     RecordingAction.instances = []
+    RecordingTimer.instances = []
 
     # A factory, not a value: each call must hand back a class, because the
     # production code does `QMenu()` / `QAction(...)` / `QTimer()`.
@@ -420,7 +458,7 @@ def install_fake_pyqt6(testcase, tray_available, permissive=False):
     qtwidgets.QSystemTrayIcon = RecordingTrayIcon
 
     qtcore = ModuleType("PyQt6.QtCore")
-    qtcore.QTimer = stub()
+    qtcore.QTimer = timer if timer is not None else stub()
 
     qtgui = ModuleType("PyQt6.QtGui")
     qtgui.QAction = RecordingAction if permissive else stub()
@@ -459,28 +497,40 @@ class QtTrayAvailabilityTests(unittest.TestCase):
         self.assertIn("no system tray", " ".join(printed).lower())
 
     def test_the_guard_exits_rather_than_raising_import_error(self):
-        # start_tray catches ImportError and falls back to pystray, which also
-        # needs a tray. SystemExit is a BaseException, so it escapes that catch.
+        # A BaseException must escape, not be swallowed by an import fallback.
         install_fake_pyqt6(self, tray_available=False)
         with patch("builtins.print"), self.assertRaises(SystemExit):
             run_pyqt_tray(StrixDevice())
 
-    def test_start_tray_does_not_fall_back_to_pystray_on_a_tray_less_desktop(self):
+    def test_start_tray_reports_a_tray_less_desktop_instead_of_hanging(self):
         install_fake_pyqt6(self, tray_available=False)
+        printed = []
         with (
-            patch("builtins.print"),
-            patch("main.importlib.util.find_spec", return_value=object()),
-            patch("main.StrixTrayPystray") as tray_class,
-            self.assertRaises(SystemExit),
+            patch("builtins.print", side_effect=printed.append),
+            self.assertRaises(SystemExit) as raised,
         ):
             start_tray(StrixDevice())
-        tray_class.assert_not_called()
+        self.assertEqual(raised.exception.code, 1)
+        self.assertIn("no system tray", " ".join(printed).lower())
+
+    def test_start_tray_exits_when_pyqt6_is_not_installed(self):
+        printed = []
+        with (
+            patch(
+                "main.run_pyqt_tray", side_effect=ImportError("No module named 'PyQt6'")
+            ),
+            patch("builtins.print", side_effect=printed.append),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            start_tray(StrixDevice())
+        self.assertEqual(raised.exception.code, 1)
+        self.assertIn("PyQt6", " ".join(printed))
 
 
 class OfflineMessageWiringTests(unittest.TestCase):
-    """`offline_message` must reach the user through every tray backend.
+    """`offline_message` must reach the user through every tray surface.
 
-    Reverting any of these three call sites to a hardcoded string must fail the
+    Reverting any of these call sites to a hardcoded string must fail the
     suite; without these tests the whole user-visible outcome of the permission
     fix is unverified.
     """
@@ -523,27 +573,6 @@ class OfflineMessageWiringTests(unittest.TestCase):
         # construction does not break this.
         texts = [a.text for a in RecordingAction.instances if a.text is not None]
         self.assertIn(f"{HEADSET_ICON} {offline_message(ERROR_PERMISSION)}", texts)
-
-    def test_pystray_menu_item_carries_the_message(self):
-        tray = object.__new__(StrixTrayPystray)
-        device = FakeDevice()
-        device.last_error = ERROR_PERMISSION
-        tray.device = device
-        self.assertEqual(tray.get_status_text(), offline_message(ERROR_PERMISSION))
-
-    def test_pystray_tooltip_carries_the_message(self):
-        tray = object.__new__(StrixTrayPystray)
-        device = FakeDevice()
-        device.last_error = ERROR_PERMISSION
-        tray.device = device
-        tray.icon = FakePystrayIcon()
-        tray._shutting_down = False
-        with (
-            patch.object(device, "query", return_value=None),
-            patch("main.render_tray_icon", return_value=object()),
-        ):
-            tray.update_tray()
-        self.assertEqual(tray.icon.title, offline_message(ERROR_PERMISSION))
 
 
 class DischargeCurveTests(unittest.TestCase):
@@ -683,6 +712,62 @@ class DischargeCurveTests(unittest.TestCase):
         )
 
 
+class QtHiddenTrayPollTests(unittest.TestCase):
+    """A hidden tray icon must stop the poll, or it queries the device forever.
+
+    This invariant used to live only in the pystray backend. Desktop
+    environments hide the tray icon when a fullscreen menu opens, so without
+    the guard the app keeps hitting the HID device every 15 seconds while
+    nothing is on screen.
+    """
+
+    def start_tray(self):
+        install_fake_pyqt6(
+            self, tray_available=True, permissive=True, timer=RecordingTimer
+        )
+        device = StrixDevice()
+        # The mock must outlive this method: firing the timer after the patch
+        # context closes would call the real query and touch real hardware.
+        patcher = patch.object(device, "query", return_value=None)
+        self.query = patcher.start()
+        self.addCleanup(patcher.stop)
+        with self.assertRaises(SystemExit):
+            run_pyqt_tray(device)
+        self.tray = RecordingTrayIcon.instances[-1]
+        self.timer = RecordingTimer.instances[-1]
+
+    def test_the_poll_stops_while_the_icon_is_hidden(self):
+        self.start_tray()
+        self.tray.shown = False
+        self.query.reset_mock()
+
+        self.timer.fire_timeout()
+
+        self.query.assert_not_called()
+
+    def test_the_poll_still_runs_while_the_icon_is_visible(self):
+        self.start_tray()
+        self.query.reset_mock()
+
+        self.timer.fire_timeout()
+
+        self.query.assert_called_once()
+
+    def test_the_first_refresh_happens_even_though_the_icon_is_not_shown_yet(self):
+        # initialize_tray refreshes before tray.show(), so the visibility guard
+        # must live on the timer callback and not inside update_state.
+        install_fake_pyqt6(
+            self, tray_available=True, permissive=True, timer=RecordingTimer
+        )
+        device = StrixDevice()
+        patcher = patch.object(device, "query", return_value=None)
+        query = patcher.start()
+        self.addCleanup(patcher.stop)
+        with self.assertRaises(SystemExit):
+            run_pyqt_tray(device)
+        query.assert_called_once()
+
+
 class SleepDurationTests(unittest.TestCase):
     def test_accepts_values_that_fit_the_hid_field(self):
         self.assertEqual(validate_sleep_minutes(0), 0)
@@ -693,346 +778,6 @@ class SleepDurationTests(unittest.TestCase):
             validate_sleep_minutes(-1)
         with self.assertRaises(ValueError):
             validate_sleep_minutes(MAX_SLEEP_MINUTES + 1)
-
-
-class FakePystrayIcon:
-    def __init__(self, device=None):
-        self.device = device
-        self.visible = False
-        self.detached_runs = 0
-        self.blocking_runs = 0
-        self.stop_count = 0
-        self.icon_write_threads = []
-        self.title_write_threads = []
-        self._icon = None
-        self._title = None
-
-    @property
-    def icon(self):
-        return self._icon
-
-    @icon.setter
-    def icon(self, value):
-        self.icon_write_threads.append(threading.get_ident())
-        self._icon = value
-
-    @property
-    def title(self):
-        return self._title
-
-    @title.setter
-    def title(self, value):
-        self.title_write_threads.append(threading.get_ident())
-        self._title = value
-
-    def run_detached(self):
-        self.detached_runs += 1
-
-    def run(self):
-        self.blocking_runs += 1
-        if self.device is not None:
-            self.device.query_finished.wait(timeout=1)
-
-    def stop(self):
-        self.stop_count += 1
-
-
-class FakeMainLoop:
-    def __init__(self):
-        self.run_count = 0
-        self.quit_count = 0
-        self.run_error = None
-        self.dispatch_callback = None
-
-    def run(self):
-        self.run_count += 1
-        if self.dispatch_callback is not None:
-            self.dispatch_callback()
-        if self.run_error is not None:
-            raise self.run_error
-
-    def quit(self):
-        self.quit_count += 1
-
-
-class FakeGLib:
-    def __init__(self, dispatch_timer=False):
-        self.main_loop = FakeMainLoop()
-        self.dispatch_timer = dispatch_timer
-        self.timer_callback = None
-        self.timer_interval = None
-        self.removed_source_ids = []
-        self.source_remove_error = None
-
-    def MainLoop(self):
-        return self.main_loop
-
-    def timeout_add_seconds(self, interval, callback):
-        self.timer_interval = interval
-        self.timer_callback = callback
-        if self.dispatch_timer:
-            self.main_loop.dispatch_callback = callback
-        return 1
-
-    def source_remove(self, source_id):
-        self.removed_source_ids.append(source_id)
-        if self.source_remove_error is not None:
-            raise self.source_remove_error
-
-
-class FakeDevice:
-    def __init__(self):
-        self.query_threads = []
-        self.query_finished = threading.Event()
-        self.query_error = None
-        self.after_query = None
-        self.status = {
-            "percentage": 50,
-            "voltage": 4000,
-            "charging": True,
-            "sleep_min": 0,
-        }
-        self.last_error = None
-        self.last_status = None
-        self.noise_reduction = False
-
-    def query(self):
-        self.query_threads.append(threading.get_ident())
-        self.query_finished.set()
-        if self.query_error is not None:
-            raise self.query_error
-        if self.after_query is not None:
-            self.after_query()
-        return self.status
-
-
-class FakeMenu:
-    SEPARATOR = object()
-
-    def __init__(self, *items):
-        self.items = items
-
-
-class FakeMenuItem:
-    def __init__(self, text, action, **kwargs):
-        self.text = text
-        self.action = action
-        self.submenu = action if isinstance(action, FakeMenu) else None
-        self.checked = kwargs.get("checked")
-        self.radio = kwargs.get("radio", False)
-
-
-def find_menu_item(items, text):
-    for item in items:
-        if not hasattr(item, "text"):
-            continue
-        if item.text == text:
-            return item
-        if item.submenu is not None:
-            match = find_menu_item(item.submenu.items, text)
-            if match is not None:
-                return match
-    return None
-
-
-class PystrayPollingTests(unittest.TestCase):
-    def test_start_schedules_updates_on_the_main_loop(self):
-        tray = object.__new__(StrixTrayPystray)
-        tray.icon = FakePystrayIcon()
-        tray.icon.visible = True
-        glib = FakeGLib(dispatch_timer=True)
-        updates = []
-        tray.update_tray = lambda: updates.append("updated")
-        tray._main_loop = None
-        tray._poll_source_id = None
-
-        with patch("main._load_glib", return_value=glib):
-            tray.start()
-
-        self.assertIsNotNone(glib.timer_callback)
-        self.assertEqual(glib.timer_interval, 15)
-        self.assertEqual(glib.main_loop.run_count, 1)
-        self.assertEqual(tray.icon.detached_runs, 1)
-        self.assertEqual(tray.icon.blocking_runs, 0)
-        self.assertEqual(updates, ["updated"])
-
-    def test_polling_mutates_icon_on_main_loop_thread(self):
-        device = FakeDevice()
-        icon = FakePystrayIcon(device)
-        icon.visible = True
-        tray = object.__new__(StrixTrayPystray)
-        tray.device = device
-        tray.icon = icon
-        glib = FakeGLib(dispatch_timer=True)
-        main_thread = threading.get_ident()
-
-        with (
-            patch("main._load_glib", return_value=glib),
-            patch("main.render_tray_icon", return_value=object()),
-        ):
-            tray.start()
-
-        self.assertEqual(device.query_threads, [main_thread])
-        self.assertEqual(icon.icon_write_threads, [main_thread])
-        self.assertEqual(icon.title_write_threads, [main_thread])
-
-    def test_poll_clears_source_id_when_refresh_fails(self):
-        device = FakeDevice()
-        device.query_error = RuntimeError("query failed")
-        tray = object.__new__(StrixTrayPystray)
-        tray.device = device
-        tray.icon = FakePystrayIcon()
-        tray.icon.visible = True
-        tray._poll_source_id = 1
-        tray._shutting_down = False
-
-        with self.assertRaisesRegex(RuntimeError, "query failed"):
-            tray.poll()
-
-        self.assertIsNone(tray._poll_source_id)
-
-    def test_start_skips_automatic_polling_without_glib(self):
-        tray = object.__new__(StrixTrayPystray)
-        tray.icon = FakePystrayIcon()
-        tray._main_loop = None
-        tray._poll_source_id = None
-
-        with patch("main._load_glib", side_effect=ImportError), patch("builtins.print"):
-            tray.start()
-
-        self.assertEqual(tray.icon.blocking_runs, 1)
-        self.assertEqual(tray.icon.detached_runs, 0)
-
-    def test_start_cleans_up_when_main_loop_fails(self):
-        tray = object.__new__(StrixTrayPystray)
-        tray.icon = FakePystrayIcon()
-        glib = FakeGLib()
-        glib.main_loop.run_error = RuntimeError("main loop failed")
-        tray._main_loop = None
-        tray._poll_source_id = None
-
-        with (
-            patch("main._load_glib", return_value=glib),
-            self.assertRaisesRegex(RuntimeError, "main loop failed"),
-        ):
-            tray.start()
-
-        self.assertEqual(glib.removed_source_ids, [1])
-        self.assertEqual(tray.icon.stop_count, 1)
-        self.assertEqual(glib.main_loop.quit_count, 1)
-
-    def test_quit_stops_polling_icon_and_main_loop(self):
-        tray = object.__new__(StrixTrayPystray)
-        tray.icon = FakePystrayIcon()
-        glib = FakeGLib()
-        tray._glib = glib
-        tray._main_loop = glib.main_loop
-        tray._poll_source_id = 1
-        tray._shutting_down = False
-
-        tray.quit()
-
-        self.assertEqual(glib.removed_source_ids, [1])
-        self.assertEqual(tray.icon.stop_count, 1)
-        self.assertEqual(glib.main_loop.quit_count, 1)
-
-    def test_quit_continues_cleanup_when_timer_removal_fails(self):
-        tray = object.__new__(StrixTrayPystray)
-        tray.icon = FakePystrayIcon()
-        glib = FakeGLib()
-        glib.source_remove_error = RuntimeError("timer cleanup failed")
-        tray._glib = glib
-        tray._main_loop = glib.main_loop
-        tray._poll_source_id = 1
-        tray._shutting_down = False
-
-        with self.assertRaisesRegex(RuntimeError, "timer cleanup failed"):
-            tray.quit()
-
-        self.assertEqual(tray.icon.stop_count, 1)
-        self.assertEqual(glib.main_loop.quit_count, 1)
-
-    def test_quit_is_idempotent(self):
-        tray = object.__new__(StrixTrayPystray)
-        tray.icon = FakePystrayIcon()
-        glib = FakeGLib()
-        tray._glib = glib
-        tray._main_loop = glib.main_loop
-        tray._poll_source_id = 1
-        tray._shutting_down = False
-
-        tray.quit()
-        tray.quit()
-
-        self.assertEqual(glib.removed_source_ids, [1])
-        self.assertEqual(tray.icon.stop_count, 1)
-        self.assertEqual(glib.main_loop.quit_count, 1)
-
-    def test_poll_stops_when_icon_is_hidden(self):
-        tray = object.__new__(StrixTrayPystray)
-        tray.icon = FakePystrayIcon()
-        tray._poll_source_id = 1
-        tray._shutting_down = False
-        updates = []
-        tray.update_tray = lambda: updates.append("updated")
-
-        self.assertFalse(tray.poll())
-        self.assertIsNone(tray._poll_source_id)
-        self.assertEqual(updates, [])
-
-    def test_poll_does_not_update_after_shutdown_starts(self):
-        tray = object.__new__(StrixTrayPystray)
-        tray.icon = FakePystrayIcon()
-        tray.icon.visible = True
-        tray._poll_source_id = 1
-        tray._shutting_down = True
-        updates = []
-        tray.update_tray = lambda: updates.append("updated")
-
-        self.assertFalse(tray.poll())
-        self.assertIsNone(tray._poll_source_id)
-        self.assertEqual(updates, [])
-
-    def test_poll_does_not_write_icon_after_shutdown_during_query(self):
-        device = FakeDevice()
-        icon = FakePystrayIcon()
-        icon.visible = True
-        tray = object.__new__(StrixTrayPystray)
-        tray.device = device
-        tray.icon = icon
-        tray._glib = None
-        tray._main_loop = None
-        tray._poll_source_id = 1
-        tray._shutting_down = False
-        device.after_query = tray.quit
-
-        self.assertFalse(tray.poll())
-        self.assertIsNone(tray._poll_source_id)
-        self.assertEqual(icon.icon_write_threads, [])
-        self.assertEqual(icon.title_write_threads, [])
-
-    def test_quit_menu_item_uses_full_shutdown_path(self):
-        tray = object.__new__(StrixTrayPystray)
-        tray.icon = FakePystrayIcon()
-        updates = []
-        tray.update_tray = lambda: updates.append("updated")
-        quit_calls = []
-        tray.quit = lambda: quit_calls.append("quit")
-        pystray = ModuleType("pystray")
-        pystray.Menu = FakeMenu
-        pystray.MenuItem = FakeMenuItem
-
-        with patch.dict("sys.modules", {"pystray": pystray}):
-            menu = tray.create_menu()
-
-        refresh_item = find_menu_item(menu.items, "Refresh Now")
-        refresh_item.action()
-        self.assertEqual(updates, ["updated"])
-
-        quit_item = find_menu_item(menu.items, "Quit")
-        quit_item.action()
-        self.assertEqual(quit_calls, ["quit"])
-        self.assertEqual(tray.icon.stop_count, 0)
 
 
 class FakeSignalController:
@@ -1537,75 +1282,3 @@ class QtNoiseReductionMenuTests(unittest.TestCase):
             )
             toggle.triggered.emit(False)
         setter.assert_called_once_with(True)
-
-
-class PystrayNoiseReductionMenuTests(unittest.TestCase):
-    """The Pystray fallback must match the PyQt6 menu."""
-
-    def bare_device(self, noise_reduction):
-        """A StrixDevice without running __init__, so no state file is
-        touched. The status lambdas also read these, so set them."""
-        device = StrixDevice.__new__(StrixDevice)
-        device.noise_reduction = noise_reduction
-        device.last_status = None
-        device.last_error = None
-        return device
-
-    def test_the_status_text_reflects_the_device_state(self):
-        tray = object.__new__(StrixTrayPystray)
-        # Same idiom as the tray itself above: a device without
-        # running __init__, so no state file is touched.
-        device = self.bare_device(True)
-        tray.device = device
-        self.assertIn("On", tray.get_noise_reduction_text())
-
-    def find_toggle_item(self, menu):
-        """The toggle is the item whose text is computed from the state."""
-        found = []
-
-        def walk(items):
-            for item in items:
-                if getattr(item, "submenu", None) is not None:
-                    walk(item.submenu.items)
-                elif callable(getattr(item, "text", None)) and (
-                    "Microphone Noise Reduction" in item.text(None)
-                ):
-                    found.append(item)
-
-        walk(menu.items)
-        return found[0] if found else None
-
-    def build_menu(self, tray):
-        # create_menu imports pystray at call time; point it at the
-        # same fakes the other menu tests use so the built menu can be
-        # introspected (real pystray keeps its action callable private).
-        pystray = ModuleType("pystray")
-        pystray.Menu = FakeMenu
-        pystray.MenuItem = FakeMenuItem
-
-        with patch.dict("sys.modules", {"pystray": pystray}):
-            return tray.create_menu()
-
-    def test_the_toggle_item_text_reflects_the_device_state(self):
-        tray = object.__new__(StrixTrayPystray)
-        device = self.bare_device(True)
-        tray.device = device
-        menu = self.build_menu(tray)
-        toggle = self.find_toggle_item(menu)
-        self.assertIsNotNone(toggle)
-        self.assertIn("On", toggle.text(None))
-
-    def test_clicking_the_toggle_sends_the_opposite_state(self):
-        tray = object.__new__(StrixTrayPystray)
-        device = self.bare_device(False)
-        tray.device = device
-        menu = self.build_menu(tray)
-        toggle = self.find_toggle_item(menu)
-        self.assertIsNotNone(toggle)
-        with patch.object(device, "set_noise_reduction", return_value=True) as setter:
-            toggle.action()
-        setter.assert_called_once_with(True)
-
-
-if __name__ == "__main__":
-    unittest.main()

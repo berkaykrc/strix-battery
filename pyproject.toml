@@ -1,6 +1,6 @@
 [project]
 name = "strix-battery"
-version = "0.2.0"
+version = "0.2.1"
 description = "Linux battery and sleep manager for the ASUS ROG Strix Go 2.4 headset"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -11,11 +11,6 @@ dependencies = [
 
 [project.scripts]
 strix-battery = "main:main"
-
-[project.optional-dependencies]
-fallback-tray = [
-    "pystray>=0.19.5",
-]
 
 [dependency-groups]
 dev = [
@@ -54,8 +49,8 @@ ignore = ["E501"]
 # relaxations live here. Production code must check clean.
 
 [[tool.ty.overrides]]
-# The tray tests drive PyQt6/pystray through hand-built fakes and assign
-# them where the real classes go. That dynamic trickery is the point of
-# the harness, so the rules that forbid it stay off for tests only.
+# The tray tests drive PyQt6 through hand-built fakes and assign them
+# where the real classes go. That dynamic trickery is the point of the
+# harness, so the rules that forbid it stay off for tests only.
 include = ["tests/**"]
 rules = { "invalid-assignment" = "ignore", "unresolved-attribute" = "ignore", "call-non-callable" = "ignore" }

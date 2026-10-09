@@ -6,7 +6,6 @@ A small Linux command-line and system tray application for monitoring the batter
 
 - Reads battery percentage, voltage, and charging status from the USB receiver.
 - Provides a Qt6-based system tray application.
-- Falls back to Pystray when Qt6 is unavailable.
 - Configures the automatic sleep timer from 0 to 1092 minutes.
 - Provides JSON output for Waybar and Polybar.
 - Sends a desktop notification when the battery reaches 15% or less.
@@ -39,12 +38,6 @@ sudo udevadm trigger
 git clone https://github.com/berkaykrc/strix-battery.git
 cd strix-battery
 uv sync
-```
-
-To install the optional Pystray fallback:
-
-```bash
-uv sync --extra fallback-tray
 ```
 
 ## Usage
@@ -88,7 +81,7 @@ so a typo cannot stop the tray from rendering.
 ## Development
 
 ```bash
-uv sync --group dev --extra fallback-tray
+uv sync --group dev
 uv run python -m unittest discover -s tests
 uv run --group dev ruff check .
 uv run --group dev ruff format --check .
