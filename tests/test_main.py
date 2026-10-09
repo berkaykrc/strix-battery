@@ -543,6 +543,89 @@ class OfflineMessageWiringTests(unittest.TestCase):
         self.assertEqual(tray.icon.title, offline_message(ERROR_PERMISSION))
 
 
+class DischargeCurveTests(unittest.TestCase):
+    """A piecewise curve replaces the linear map; these pin its guarantees."""
+
+    LINEAR = ((3300, 0), (4150, 100))
+
+    def test_the_shipped_table_reproduces_the_linear_map_exactly(self):
+        # Task 1 must be behaviour-preserving. If this fails, the default table
+        # has drifted and every reported percentage is now unverified.
+        curve = main.DEFAULT_DISCHARGE_CURVE
+        self.assertEqual(curve, self.LINEAR)
+        for mv in range(3200, 4200, 7):
+            expected = (
+                0
+                if mv <= 3300
+                else 100
+                if mv >= 4150
+                else int((mv - 3300) / (4150 - 3300) * 100)
+            )
+            self.assertEqual(main.mv_to_percent(mv), expected, f"{mv}mV moved")
+
+    def test_percentages_never_fall_as_voltage_falls(self):
+        previous = -1
+        for mv in range(3200, 4200, 5):
+            current = main.mv_to_percent(mv)
+            self.assertGreaterEqual(current, previous, f"regressed at {mv}mV")
+            previous = current
+
+    def test_the_curve_is_ordered_by_voltage_and_clamped_at_both_ends(self):
+        self.assertEqual(main.mv_to_percent(0), 0)
+        self.assertEqual(main.mv_to_percent(65535), 100)
+
+    def test_an_exact_calibration_point_is_hit_exactly(self):
+        curve = ((3300, 0), (3600, 25), (4000, 80), (4150, 100))
+        for mv, pct in curve:
+            self.assertEqual(main.mv_to_percent(mv, curve=curve), pct)
+
+    def test_a_voltage_between_points_interpolates_monotonically(self):
+        curve = ((3300, 0), (3600, 25), (4000, 80), (4150, 100))
+        values = [main.mv_to_percent(mv, curve=curve) for mv in range(3300, 4151, 25)]
+        self.assertEqual(values, sorted(values))
+        self.assertLessEqual(min(values), 25)
+        self.assertGreaterEqual(max(values), 80)
+
+    def test_a_voltage_outside_the_table_clamps_rather_than_extrapolating(self):
+        curve = ((3300, 0), (3600, 25), (4000, 80), (4150, 100))
+        self.assertEqual(main.mv_to_percent(3000, curve=curve), 0)
+        self.assertEqual(main.mv_to_percent(4200, curve=curve), 100)
+        self.assertEqual(main.mv_to_percent(65535, curve=curve), 100)
+
+    def test_the_env_var_format_round_trips(self):
+        spec = "3300:0,3600:25,4000:80,4150:100"
+        self.assertEqual(
+            main.parse_discharge_curve(spec),
+            ((3300, 0), (3600, 25), (4000, 80), (4150, 100)),
+        )
+
+    def test_a_malformed_curve_is_rejected(self):
+        for spec in ["", "3300", "3300:0:5", "abc", "3300:0,", "3600:20,3300:0"]:
+            with self.assertRaises(ValueError, msg=spec):
+                main.parse_discharge_curve(spec)
+
+    def test_a_malformed_env_var_falls_back_instead_of_breaking_the_tray(self):
+        import contextlib
+        import io
+
+        err = io.StringIO()
+        with (
+            patch.dict("os.environ", {main.DISCHARGE_CURVE_ENV_VAR: "garbage"}),
+            contextlib.redirect_stderr(err),
+        ):
+            curve = main.load_discharge_curve()
+        self.assertEqual(curve, main.DEFAULT_DISCHARGE_CURVE)
+        self.assertIn("STRIX_BATTERY_CURVE", err.getvalue())
+
+    def test_a_valid_env_var_is_honoured(self):
+        with patch.dict(
+            "os.environ",
+            {main.DISCHARGE_CURVE_ENV_VAR: "3300:0,3600:25,4150:100"},
+        ):
+            curve = main.load_discharge_curve()
+        self.assertEqual(curve, ((3300, 0), (3600, 25), (4150, 100)))
+
+
 class SleepDurationTests(unittest.TestCase):
     def test_accepts_values_that_fit_the_hid_field(self):
         self.assertEqual(validate_sleep_minutes(0), 0)
