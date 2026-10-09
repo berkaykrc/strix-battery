@@ -70,6 +70,21 @@ uv run python main.py --json
 
 `--set-sleep 0` disables automatic shutdown. The maximum value is 1092 minutes because the HID packet uses a 16-bit seconds field.
 
+### Battery curve
+
+The shipped millivolt-to-percentage curve is the linear map and is deliberately
+uncalibrated. If you have measured your own cell, override it with ascending
+`mV:percent` pairs:
+
+```bash
+export STRIX_BATTERY_CURVE="3300:0,3600:25,4000:80,4150:100"
+```
+
+Take readings with the headset powered on and connected, since a cell at rest
+reads higher than the same cell under load. Voltage must ascend and percentage
+must never fall. A malformed value is reported once on stderr and then ignored,
+so a typo cannot stop the tray from rendering.
+
 ## Development
 
 ```bash

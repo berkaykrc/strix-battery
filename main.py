@@ -103,8 +103,13 @@ DEFAULT_DISCHARGE_CURVE = ((3300, 0), (4150, 100))
 
 DISCHARGE_CURVE_ENV_VAR = "STRIX_BATTERY_CURVE"
 
+# Specs already warned about, so a typo is reported once rather than on every
+# poll. Both tray backends poll every 15s; without this the same line lands in
+# the journal thousands of times a day and buries itself.
+_WARNED_CURVES: set[str] = set()
 
-def parse_discharge_curve(spec: str):
+
+def parse_discharge_curve(spec: str) -> tuple[tuple[int, int], ...]:
     """Parse "mv:pct,mv:pct,..." into an ordered tuple of pairs.
 
     Raises ValueError on anything malformed, including a curve that is not
@@ -137,7 +142,7 @@ def parse_discharge_curve(spec: str):
     return tuple(points)
 
 
-def load_discharge_curve():
+def load_discharge_curve() -> tuple[tuple[int, int], ...]:
     """The calibrated curve, or the shipped one with a warning if the override is bad."""
     spec = os.environ.get(DISCHARGE_CURVE_ENV_VAR)
     if not spec:
@@ -145,14 +150,16 @@ def load_discharge_curve():
     try:
         return parse_discharge_curve(spec)
     except ValueError as exc:
-        print(
-            f"Warning: ignoring {DISCHARGE_CURVE_ENV_VAR}={spec!r}: {exc}",
-            file=sys.stderr,
-        )
+        if spec not in _WARNED_CURVES:
+            _WARNED_CURVES.add(spec)
+            print(
+                f"Warning: ignoring {DISCHARGE_CURVE_ENV_VAR}={spec!r}: {exc}",
+                file=sys.stderr,
+            )
         return DEFAULT_DISCHARGE_CURVE
 
 
-def mv_to_percent(mv: int, curve=None) -> int:
+def mv_to_percent(mv: int, curve: tuple[tuple[int, int], ...] | None = None) -> int:
     """Convert 1S Li-ion battery millivolts to a percentage from 0 to 100.
 
     Interpolates linearly between calibration points and clamps outside the

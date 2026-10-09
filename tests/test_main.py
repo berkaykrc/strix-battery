@@ -1,3 +1,6 @@
+import contextlib
+import io
+import itertools
 import json
 import pathlib
 import struct
@@ -553,26 +556,31 @@ class DischargeCurveTests(unittest.TestCase):
         # has drifted and every reported percentage is now unverified.
         curve = main.DEFAULT_DISCHARGE_CURVE
         self.assertEqual(curve, self.LINEAR)
-        for mv in range(3200, 4200, 7):
-            expected = (
-                0
-                if mv <= 3300
-                else 100
-                if mv >= 4150
-                else int((mv - 3300) / (4150 - 3300) * 100)
-            )
-            self.assertEqual(main.mv_to_percent(mv), expected, f"{mv}mV moved")
+        # Clear the environment so this pins the *shipped* table rather than
+        # whatever STRIX_BATTERY_CURVE the developer happens to have exported.
+        with patch.dict("os.environ"):
+            for mv in range(3200, 4200, 7):
+                expected = (
+                    0
+                    if mv <= 3300
+                    else 100
+                    if mv >= 4150
+                    else int((mv - 3300) / (4150 - 3300) * 100)
+                )
+                self.assertEqual(main.mv_to_percent(mv), expected, f"{mv}mV moved")
 
     def test_percentages_never_fall_as_voltage_falls(self):
         previous = -1
-        for mv in range(3200, 4200, 5):
-            current = main.mv_to_percent(mv)
-            self.assertGreaterEqual(current, previous, f"regressed at {mv}mV")
-            previous = current
+        with patch.dict("os.environ"):
+            for mv in range(3200, 4200, 5):
+                current = main.mv_to_percent(mv)
+                self.assertGreaterEqual(current, previous, f"regressed at {mv}mV")
+                previous = current
 
     def test_the_curve_is_ordered_by_voltage_and_clamped_at_both_ends(self):
-        self.assertEqual(main.mv_to_percent(0), 0)
-        self.assertEqual(main.mv_to_percent(65535), 100)
+        with patch.dict("os.environ"):
+            self.assertEqual(main.mv_to_percent(0), 0)
+            self.assertEqual(main.mv_to_percent(65535), 100)
 
     def test_an_exact_calibration_point_is_hit_exactly(self):
         curve = ((3300, 0), (3600, 25), (4000, 80), (4150, 100))
@@ -585,6 +593,20 @@ class DischargeCurveTests(unittest.TestCase):
         self.assertEqual(values, sorted(values))
         self.assertLessEqual(min(values), 25)
         self.assertGreaterEqual(max(values), 80)
+
+    def test_a_voltage_between_points_interpolates_rather_than_steps(self):
+        # Monotonicity alone cannot tell interpolation from a step function:
+        # both are non-decreasing and hit the same endpoints. Assert each
+        # segment's midpoint lands halfway, which a step function cannot do.
+        curve = ((3300, 0), (3600, 25), (4000, 80), (4150, 100))
+        for (low_mv, low_pct), (high_mv, high_pct) in itertools.pairwise(curve):
+            midpoint = main.mv_to_percent((low_mv + high_mv) // 2, curve=curve)
+            self.assertAlmostEqual(
+                midpoint,
+                (low_pct + high_pct) / 2,
+                delta=2,
+                msg=f"{low_mv}-{high_mv}mV stepped instead of interpolating",
+            )
 
     def test_a_voltage_outside_the_table_clamps_rather_than_extrapolating(self):
         curve = ((3300, 0), (3600, 25), (4000, 80), (4150, 100))
@@ -600,14 +622,22 @@ class DischargeCurveTests(unittest.TestCase):
         )
 
     def test_a_malformed_curve_is_rejected(self):
-        for spec in ["", "3300", "3300:0:5", "abc", "3300:0,", "3600:20,3300:0"]:
+        specs = [
+            "",
+            "3300",
+            "3300:0:5",
+            "abc",
+            "3300:0,",
+            "3600:20,3300:0",  # voltage must ascend
+            "3300:80,4150:20",  # percentage must not fall
+            "3300:0,4150:101",  # percentage above 100
+            "3300:0,4150:-1",  # percentage below 0
+        ]
+        for spec in specs:
             with self.assertRaises(ValueError, msg=spec):
                 main.parse_discharge_curve(spec)
 
     def test_a_malformed_env_var_falls_back_instead_of_breaking_the_tray(self):
-        import contextlib
-        import io
-
         err = io.StringIO()
         with (
             patch.dict("os.environ", {main.DISCHARGE_CURVE_ENV_VAR: "garbage"}),
@@ -624,6 +654,33 @@ class DischargeCurveTests(unittest.TestCase):
         ):
             curve = main.load_discharge_curve()
         self.assertEqual(curve, ((3300, 0), (3600, 25), (4150, 100)))
+
+    def test_the_env_var_actually_reaches_the_percentage(self):
+        # load_discharge_curve is not the deliverable on its own; the override
+        # is only real if mv_to_percent honours it.
+        with patch.dict(
+            "os.environ",
+            {main.DISCHARGE_CURVE_ENV_VAR: "3300:0,3600:25,4150:100"},
+        ):
+            # 65 on this curve vs 70 on the linear default, so the assertion
+            # fails if the override ever stops being consulted.
+            self.assertEqual(main.mv_to_percent(3900), 65)
+
+    def test_a_bad_env_var_warns_once_not_on_every_poll(self):
+        # Both tray backends poll every 15s, so a per-call warning becomes
+        # thousands of identical lines a day and buries the message.
+        err = io.StringIO()
+        with (
+            patch.dict("os.environ", {main.DISCHARGE_CURVE_ENV_VAR: "not-a-curve"}),
+            contextlib.redirect_stderr(err),
+        ):
+            for _ in range(5):
+                main.mv_to_percent(3900)
+        self.assertEqual(
+            err.getvalue().count("STRIX_BATTERY_CURVE"),
+            1,
+            "the warning must not repeat on every poll",
+        )
 
 
 class SleepDurationTests(unittest.TestCase):
