@@ -47,7 +47,7 @@
 - Consumes: `signal.getsignal(signal.SIGINT)`, `signal.signal(signal.SIGINT, handler)`, `QTimer.singleShot(0, app.quit)`, and `app.exec()`.
 - Produces: `_run_qt_app_with_sigint_shutdown(app, timer, before_exec=None) -> int`; `run_pyqt_tray()` passes its `QApplication`, `QTimer` class, and protected setup callback to this helper and exits with its returned code.
 
-- [ ] **Step 1: Write failing lifecycle tests**
+- [x] **Step 1: Write failing lifecycle tests**
 
 Update imports in `tests/test_main.py`:
 
@@ -248,7 +248,7 @@ class QtSignalShutdownTests(unittest.TestCase):
         self.assert_previous_handler_restored(signal_module, previous_handler)
 ```
 
-- [ ] **Step 2: Run new tests and verify RED**
+- [x] **Step 2: Run new tests and verify RED**
 
 Run:
 
@@ -258,7 +258,7 @@ uv run python -m unittest discover -s tests -p 'test_main.py' -k QtSignalShutdow
 
 Expected: import or test failure because `_run_qt_app_with_sigint_shutdown` does not exist yet.
 
-- [ ] **Step 3: Implement the minimal lifecycle helper**
+- [x] **Step 3: Implement the minimal lifecycle helper**
 
 Add `signal` to the standard-library imports in `main.py`:
 
@@ -302,7 +302,7 @@ Move the potentially blocking initial update and tray setup behind the protected
     sys.exit(_run_qt_app_with_sigint_shutdown(app, QTimer, initialize_tray))
 ```
 
-- [ ] **Step 4: Run focused tests and verify GREEN**
+- [x] **Step 4: Run focused tests and verify GREEN**
 
 Run:
 
@@ -312,7 +312,7 @@ uv run python -m unittest discover -s tests -p 'test_main.py' -k QtSignalShutdow
 
 Expected: 6 tests run, all pass.
 
-- [ ] **Step 5: Run the complete unit suite**
+- [x] **Step 5: Run the complete unit suite**
 
 Run:
 
@@ -322,7 +322,7 @@ uv run python -m unittest discover -s tests -v
 
 Expected: 20 tests run, all pass.
 
-- [ ] **Step 6: Smoke-test real terminal Ctrl+C handling**
+- [x] **Step 6: Smoke-test real terminal Ctrl+C handling**
 
 Run from the worktree root:
 
@@ -340,7 +340,7 @@ coredumpctl --no-pager list --since "2 minutes ago"
 
 Expected: no new `python3.12` coredump from this smoke test.
 
-- [ ] **Step 7: Stage the complete change**
+- [x] **Step 7: Stage the complete change**
 
 Run:
 
@@ -350,7 +350,7 @@ git add main.py tests/test_main.py docs/superpowers/plans/2026-09-24-graceful-si
 
 Expected: all intended files are staged and no unrelated files are staged.
 
-- [ ] **Step 8: Review the complete staged diff**
+- [x] **Step 8: Review the complete staged diff**
 
 Run:
 
@@ -362,7 +362,7 @@ git diff --cached -- main.py tests/test_main.py docs/superpowers/plans/2026-09-2
 
 Expected: no whitespace errors; staged diff contains only the signal import, protected lifecycle helper, protected startup callback, six tests, and this plan.
 
-- [ ] **Step 9: Create the single final commit**
+- [x] **Step 9: Create the single final commit**
 
 Run:
 

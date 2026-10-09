@@ -59,7 +59,7 @@ Verified facts this task relies on (both confirmed by running them):
 - `subprocess.TimeoutExpired` **is** a subclass of `subprocess.SubprocessError`, so the existing `except` clause at `main.py:162` already catches it. No new `except` is needed.
 - `subprocess.run(..., timeout=0.3)` against `sleep 30` does interrupt and raise `TimeoutExpired`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add `import subprocess` to the top of `tests/test_main.py`, immediately after the existing `import threading`:
 
@@ -119,13 +119,13 @@ from main import (
 )
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run --no-sync python -m unittest tests.test_main.NotifyTests -v`
 
 Expected: `ImportError: cannot import name 'NOTIFY_TIMEOUT_SECONDS' from 'main'`. That is the correct red state — the import at the top of the test file fails before any test body runs.
 
-- [ ] **Step 3: Add the constant**
+- [x] **Step 3: Add the constant**
 
 In `main.py`, immediately after the `MAX_SLEEP_MINUTES = 1092` line, add:
 
@@ -136,7 +136,7 @@ In `main.py`, immediately after the `MAX_SLEEP_MINUTES = 1092` line, add:
 NOTIFY_TIMEOUT_SECONDS = 3
 ```
 
-- [ ] **Step 4: Add the timeout to the subprocess call**
+- [x] **Step 4: Add the timeout to the subprocess call**
 
 Replace the whole `notify` method with:
 
@@ -156,13 +156,13 @@ Replace the whole `notify` method with:
             pass
 ```
 
-- [ ] **Step 5: Run the full suite to verify it passes**
+- [x] **Step 5: Run the full suite to verify it passes**
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
 Expected: `Ran 24 tests` — `OK`. (20 pre-existing plus 4 new.) All 20 pre-existing tests must still pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add main.py tests/test_main.py
@@ -209,7 +209,7 @@ Every averaging design buys fewer rewrites by *lagging* a real discharge by 6 to
 
 `BATTERY_DISPLAY_DEADBAND_PERCENT = 2` means the displayed value moves when the raw value differs from the displayed one by 2 or more. A real cell crosses 2% in well under a minute, so nothing perceptible is lost. If field reports show residual flicker, raise the constant to `3`; it is a one-line change that costs nothing else.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Insert these two classes immediately before `class SleepDurationTests(unittest.TestCase):`:
 
@@ -311,7 +311,7 @@ from main import (
 )
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run:
 ```bash
@@ -319,7 +319,7 @@ uv run --no-sync python -m unittest tests.test_main.MvToPercentTests tests.test_
 ```
 Expected: `ImportError: cannot import name 'mv_to_percent' from 'main'`. Both classes fail to import, so no test body runs yet.
 
-- [ ] **Step 3: Add the constants**
+- [x] **Step 3: Add the constants**
 
 In `main.py`, immediately after the `NOTIFY_TIMEOUT_SECONDS = 3` line, add:
 
@@ -337,7 +337,7 @@ LOW_BATTERY_NOTIFY_PERCENT = 15
 LOW_BATTERY_REARM_PERCENT = 20
 ```
 
-- [ ] **Step 4: Initialise the hold and add the three methods**
+- [x] **Step 4: Initialise the hold and add the three methods**
 
 Replace `StrixDevice.__init__` with:
 
@@ -391,7 +391,7 @@ Then insert these three methods immediately after `__init__` and before `find_no
         return self.notified_low
 ```
 
-- [ ] **Step 5: Wire the hold and the latch into `query`**
+- [x] **Step 5: Wire the hold and the latch into `query`**
 
 Make these five edits inside `query()`.
 
@@ -484,13 +484,13 @@ with:
             return None
 ```
 
-- [ ] **Step 6: Run the full suite to verify it passes**
+- [x] **Step 6: Run the full suite to verify it passes**
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
 Expected: `Ran 35 tests` — `OK`. (24 from Task 1, plus 3 in `MvToPercentTests` and 8 in `PercentageStabilityTests`.)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add main.py tests/test_main.py
@@ -531,7 +531,7 @@ Two facts this task relies on, both confirmed by running them:
 
 **Why the glyph constants:** the offline branch of `update_state` currently contains two literal glyphs. Retyping them in a diff is unreliable, so this task lifts them into `HEADSET_ICON` and `SLEEP_ICON` using ASCII escapes and makes `offline_message` return glyph-free text. The two glyph lines on the *online* branch are out of scope — leave them as they are.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Insert these two module-level fakes and the test class immediately before `class SleepDurationTests(unittest.TestCase):`:
 
@@ -669,13 +669,13 @@ Finally, give `FakeDevice` a `last_error` attribute so the pystray tests cannot 
         self.last_error = None
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run --no-sync python -m unittest tests.test_main.LastErrorTests -v`
 
 Expected: `ImportError: cannot import name 'ERROR_OFFLINE' from 'main'`. No test body runs.
 
-- [ ] **Step 3: Add the error and glyph constants**
+- [x] **Step 3: Add the error and glyph constants**
 
 In `main.py`, immediately after the `MAX_SLEEP_MINUTES = 1092` line and **before** the `NOTIFY_TIMEOUT_SECONDS` block from Task 1, add:
 
@@ -691,7 +691,7 @@ HEADSET_ICON = "\U0001F3A7"
 SLEEP_ICON = "\u23F1\uFE0F"
 ```
 
-- [ ] **Step 4: Add the `offline_message` helper**
+- [x] **Step 4: Add the `offline_message` helper**
 
 Insert this function immediately after `mv_to_percent` and before `class StrixDevice`:
 
@@ -710,7 +710,7 @@ def offline_message(last_error: str | None) -> str:
     return "Headset: Offline / Out of range"
 ```
 
-- [ ] **Step 5: Track the permission failure in `find_node`**
+- [x] **Step 5: Track the permission failure in `find_node`**
 
 Replace `StrixDevice.__init__` with:
 
@@ -757,7 +757,7 @@ Replace the whole `find_node` method with:
         return None, None
 ```
 
-- [ ] **Step 6: Widen `_go_offline` and record the reason in `query`**
+- [x] **Step 6: Widen `_go_offline` and record the reason in `query`**
 
 Replace the `_go_offline` method added in Task 2 with:
 
@@ -802,7 +802,7 @@ with:
             self.last_error = None
 ```
 
-- [ ] **Step 7: Show the right message in the Qt tray**
+- [x] **Step 7: Show the right message in the Qt tray**
 
 In `main.py`, replace the entire `else` branch of `update_state` (`main.py:340-344`) with the block below. The result is ASCII-only, so the whole branch is now safely retypable:
 
@@ -817,7 +817,7 @@ In `main.py`, replace the entire `else` branch of `update_state` (`main.py:340-3
 
 Do not touch the two glyph lines in the `if st:` branch above it.
 
-- [ ] **Step 8: Show the right message in the pystray fallback**
+- [x] **Step 8: Show the right message in the pystray fallback**
 
 Replace `get_status_text` (`main.py:377-382`) with:
 
@@ -838,13 +838,13 @@ Then replace the offline branch of `StrixTrayPystray.update_tray` (`main.py:419-
             self.icon.title = offline_message(self.device.last_error)
 ```
 
-- [ ] **Step 9: Run the full suite to verify it passes**
+- [x] **Step 9: Run the full suite to verify it passes**
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
 Expected: `Ran 43 tests` — `OK`. (35 from Task 2, plus 8 in `LastErrorTests`.)
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add main.py tests/test_main.py
@@ -873,7 +873,7 @@ Place the guard immediately after `QApplication.setQuitOnLastWindowClosed(False)
 
 The fakes below use two-level `sys.modules` injection, which was verified to satisfy `from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon` inside `run_pyqt_tray`. `ModuleType` is already imported in the test file at line 3.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Insert this class, helper and test class immediately before `class SleepDurationTests(unittest.TestCase):`:
 
@@ -967,7 +967,7 @@ Add `run_pyqt_tray` and `start_tray` to the `from main import ...` line, keeping
 )
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run --no-sync python -m unittest tests.test_main.QtTrayAvailabilityTests -v`
 
@@ -975,7 +975,7 @@ Expected: the import succeeds (`run_pyqt_tray` and `start_tray` already exist), 
 `TypeError: QAction.__init__() takes exactly one argument (3 given)`.
 That is the correct red state: it proves `run_pyqt_tray` ran straight past the absent guard and into widget construction.
 
-- [ ] **Step 3: Add the guard**
+- [x] **Step 3: Add the guard**
 
 In `main.py`, insert this block immediately after the line `QApplication.setQuitOnLastWindowClosed(False)` and immediately before the line `tray = QSystemTrayIcon()`:
 
@@ -995,13 +995,13 @@ In `main.py`, insert this block immediately after the line `QApplication.setQuit
         sys.exit(1)
 ```
 
-- [ ] **Step 4: Run the full suite to verify it passes**
+- [x] **Step 4: Run the full suite to verify it passes**
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
 Expected: `Ran 46 tests` — `OK`. (43 from Task 3, plus 3 in `QtTrayAvailabilityTests`.)
 
-- [ ] **Step 5: Verify against real Qt, not just the fakes**
+- [x] **Step 5: Verify against real Qt, not just the fakes**
 
 The fakes prove the guard's control flow. Confirm it against real Qt, headless, where a tray genuinely does not exist:
 
@@ -1019,7 +1019,7 @@ On GNOME, install the AppIndicator extension; on KDE Plasma, enable the Status N
 
 The command must return promptly. If it hangs, the guard is in the wrong place, or `isSystemTrayAvailable()` is being called before the `QApplication` exists.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add main.py tests/test_main.py
