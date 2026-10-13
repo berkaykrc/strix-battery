@@ -58,7 +58,7 @@ reasons unrelated to the code.
 `uv` is pinned rather than floated so a new uv release cannot break the build
 underneath a green main branch.
 
-- [ ] **Step 1: Write the workflow**
+- [x] **Step 1: Write the workflow**
 
 Create `.github/workflows/ci.yml`:
 
@@ -120,7 +120,7 @@ fails with a timeout and a confusing message, and this step turns that into an
 obvious one. Raise the version pin if `0.5.11` is not the current release at
 execution time — check with `uv --version` locally and match it.
 
-- [ ] **Step 2: Verify the workflow steps locally, in order**
+- [x] **Step 2: Verify the workflow steps locally, in order**
 
 Each step must pass on this machine before the workflow is worth committing:
 
@@ -134,7 +134,7 @@ uv run ruff check .
 Expected: `Ran 58 tests ... OK`, then `import ok`, then ruff clean. If any fails,
 fix it here. A workflow that has never been run locally is a guess.
 
-- [ ] **Step 3: Add the badge**
+- [x] **Step 3: Add the badge**
 
 In `README.md`, immediately after the `# ASUS ROG Strix Go 2.4 Battery` heading,
 add:
@@ -147,7 +147,7 @@ The repository URL is the one at `README.md:39`. If the repository is hosted
 elsewhere, use that URL — a badge pointing at a different repository renders as
 a broken image, which is worse than no badge.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add .github/workflows/ci.yml README.md

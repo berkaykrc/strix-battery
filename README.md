@@ -1,5 +1,7 @@
 # ASUS ROG Strix Go 2.4 Battery
 
+[![CI](https://github.com/berkaykrc/strix-battery/actions/workflows/ci.yml/badge.svg)](https://github.com/berkaykrc/strix-battery/actions/workflows/ci.yml)
+
 A small Linux command-line and system tray application for monitoring the battery status and configuring the automatic sleep timer of the ASUS ROG Strix Go 2.4 headset.
 
 ## Features
