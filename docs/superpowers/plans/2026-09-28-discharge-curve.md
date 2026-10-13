@@ -512,6 +512,5 @@ finding, and it is the honest one.**
   recalibrated curve changes the raw percentages the deadband filters; if
   flicker returns after Task 2, raise the constant rather than re-tuning the
   curve. The deadband's own test suite does not need to change.
-- **Everything else.** The HID protocol, the CLI exit codes, the pystray
-  dependency, the package conversion and the test harness each have their own
-  plan.
+- **Everything else.** The HID protocol, the CLI exit codes, the package
+  conversion and the test harness each have their own plan.

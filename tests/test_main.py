@@ -715,10 +715,9 @@ class DischargeCurveTests(unittest.TestCase):
 class QtHiddenTrayPollTests(unittest.TestCase):
     """A hidden tray icon must stop the poll, or it queries the device forever.
 
-    This invariant used to live only in the pystray backend. Desktop
-    environments hide the tray icon when a fullscreen menu opens, so without
-    the guard the app keeps hitting the HID device every 15 seconds while
-    nothing is on screen.
+    Desktop environments hide the tray icon when a fullscreen menu opens, so
+    without the guard the app keeps hitting the HID device every 15 seconds
+    while nothing is on screen.
     """
 
     def start_tray(self):
