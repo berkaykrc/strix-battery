@@ -80,6 +80,7 @@ class PackageLayoutTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=30,
+            cwd=pathlib.Path(main.__file__).parent,
         )
         payload = json.loads(result.stdout)  # raises if the shim never ran
         self.assertIn(payload["status"], ("online", "offline"))
@@ -156,6 +157,7 @@ class PackageLayoutTests(unittest.TestCase):
                 text=True,
                 env=env,
                 timeout=30,
+                cwd=pathlib.Path(main.__file__).parent,
             )
         # `SystemExit("...")` prints to stderr, so stdout could never contain it.
         self.assertNotIn("decoy won", result.stderr)
@@ -675,7 +677,7 @@ class QtTrayAvailabilityTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 1)
         self.assertIn("no system tray", " ".join(printed).lower())
 
-    def test_start_tray_exits_when_pyqt6_is_not_installed(self):
+    def test_start_tray_exits_when_pyqt6_is_unusable(self):
         printed = []
         with (
             patch(

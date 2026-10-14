@@ -8,14 +8,14 @@ import argparse
 import json
 import sys
 
-from .battery import (  # noqa: F401  - re-exported; `main` is the documented entry point
+from .battery import (
     DEFAULT_DISCHARGE_CURVE,
     DISCHARGE_CURVE_ENV_VAR,
     load_discharge_curve,
     mv_to_percent,
     parse_discharge_curve,
 )
-from .device import (  # noqa: F401  - re-exported; `main` is the documented entry point
+from .device import (
     ASUS_VID,
     BATTERY_DISPLAY_DEADBAND_PERCENT,
     CHARGING_FLAG,
@@ -47,8 +47,8 @@ from .device import (  # noqa: F401  - re-exported; `main` is the documented ent
     offline_message,
     validate_sleep_minutes,
 )
-from .icon import pil_to_qpixmap, render_tray_icon  # noqa: F401
-from .tray import (  # noqa: F401  - re-exported; `main` is the documented entry point
+from .icon import pil_to_qpixmap, render_tray_icon
+from .tray import (
     HEADSET_ICON,
     NOISE_REDUCTION_ICON,
     SLEEP_ICON,
@@ -62,6 +62,58 @@ from .tray import (  # noqa: F401  - re-exported; `main` is the documented entry
 EXIT_OK = 0
 EXIT_OFFLINE = 1
 EXIT_USAGE = 2
+
+__all__ = [
+    "ASUS_VID",
+    "BATTERY_DISPLAY_DEADBAND_PERCENT",
+    "CHARGING_FLAG",
+    "DEFAULT_DISCHARGE_CURVE",
+    "DISCHARGE_CURVE_ENV_VAR",
+    "ERROR_OFFLINE",
+    "ERROR_PERMISSION",
+    "EXIT_OFFLINE",
+    "EXIT_OK",
+    "EXIT_USAGE",
+    "HEADSET_ICON",
+    "HIDIOCGFEATURE_64",
+    "HIDIOCGRAWINFO",
+    "HIDIOCSFEATURE_64",
+    "LOW_BATTERY_NOTIFY_PERCENT",
+    "LOW_BATTERY_REARM_PERCENT",
+    "MAX_SLEEP_MINUTES",
+    "NOISE_REDUCTION_ICON",
+    "NOISE_REDUCTION_SUB_COMMAND",
+    "NOTIFY_TIMEOUT_SECONDS",
+    "OFFSET_CHARGING",
+    "OFFSET_SLEEP_LSB",
+    "OFFSET_SLEEP_MSB",
+    "OFFSET_SLEEP_SECONDS_LSB",
+    "OFFSET_SLEEP_SECONDS_MSB",
+    "OFFSET_VOLUME_LSB",
+    "OFFSET_VOLUME_MSB",
+    "QUERY_PACKET",
+    "REPLY_MARKER",
+    "SLEEP_ICON",
+    "SLEEP_PACKET_COMMAND",
+    "STRIX_PIDS",
+    "StrixDevice",
+    "_run_qt_app_with_sigint_shutdown",
+    "build_sleep_packet",
+    "decode_status",
+    "load_discharge_curve",
+    "main",
+    "mv_to_percent",
+    "noise_reduction_state_path",
+    "offline_message",
+    "parse_discharge_curve",
+    "pil_to_qpixmap",
+    "render_json_status",
+    "render_text_status",
+    "render_tray_icon",
+    "run_pyqt_tray",
+    "start_tray",
+    "validate_sleep_minutes",
+]
 
 
 def render_json_status(st: dict | None) -> str:
