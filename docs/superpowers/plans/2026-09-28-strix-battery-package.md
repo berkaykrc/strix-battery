@@ -63,7 +63,7 @@ git mv main.py strix_battery/__init__.py
 
 Then write the three new files and edit only the import lines in the moved ones. The `if __name__ == "__main__": main()` guard at the bottom of the moved `main.py` is now dead code (a package is never `__main__`) and drops; the shim carries the guard.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 First swap the module imports in the test file. Replace the five lines
 
@@ -181,13 +181,13 @@ class PackageLayoutTests(unittest.TestCase):
 
 `importlib` is needed by two tests; import it at the top of the class file scope is not required — the per-method imports above are deliberate so the class stays self-contained.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run --no-sync python -m unittest tests.test_main.PackageLayoutTests -v`
 
 Expected: `ModuleNotFoundError: No module named 'strix_battery'`. Correct red state — the whole module fails to import until the package exists.
 
-- [ ] **Step 3: Move the modules**
+- [x] **Step 3: Move the modules**
 
 ```bash
 mkdir -p strix_battery
@@ -203,7 +203,7 @@ git status --short
 
 Expected: five `R` (rename) entries, one of them `main.py -> strix_battery/__init__.py`. `git diff --cached -M --stat` should show each rename with no content change (100% similarity). If any file shows insertions/deletions, stop and investigate — something was rewritten during the move.
 
-- [ ] **Step 4: Relativize the intra-package imports**
+- [x] **Step 4: Relativize the intra-package imports**
 
 Three files carry intra-package imports; edit only those lines:
 
@@ -213,7 +213,7 @@ Three files carry intra-package imports; edit only those lines:
 
 `battery.py` and `icon.py` have no intra-package imports and do not change.
 
-- [ ] **Step 5: Write the CLI re-export module**
+- [x] **Step 5: Write the CLI re-export module**
 
 Create `strix_battery/cli.py`:
 
@@ -230,7 +230,7 @@ from strix_battery import *  # noqa: F401,F403
 from strix_battery import main  # noqa: F401
 ```
 
-- [ ] **Step 6: Write the top-level shim**
+- [x] **Step 6: Write the top-level shim**
 
 Create `main.py` (absent after the move):
 
@@ -258,7 +258,7 @@ returns normally would swallow that into a `0` exit. The explicit
 `_run_qt_app_with_sigint_shutdown` import is there because a star import skips
 underscore names and the suite reaches that helper through `main`.
 
-- [ ] **Step 7: Point the packaging at the package**
+- [x] **Step 7: Point the packaging at the package**
 
 In `pyproject.toml`, replace the `[project.scripts]` entry point and the `[tool.setuptools]` block:
 
@@ -278,7 +278,7 @@ Delete the `py-modules` line and its comment. `packages` and `py-modules` are mu
 
 (The version bump `0.3.0` → `0.4.0` and the `uv lock` refresh ride in this change's first commit, which is the plan re-anchor commit, per AGENTS.md.)
 
-- [ ] **Step 8: Retarget the test suite's namespaces**
+- [x] **Step 8: Retarget the test suite's namespaces**
 
 Apply the mechanical substitutions to `tests/test_main.py`:
 
@@ -288,19 +288,19 @@ sed -i 's/patch("device\./patch("strix_battery.device./g; s/patch("tray\./patch(
 
 Verify the counts: `grep -c 'patch("strix_battery\.' tests/test_main.py` → `57`; `grep -c 'patch("device\.\|patch("tray\.' tests/test_main.py` → `0`; `grep -c 'patch("main\.' tests/test_main.py` → `0`.
 
-- [ ] **Step 9: Run the full suite to verify it passes**
+- [x] **Step 9: Run the full suite to verify it passes**
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
 Expected: `OK` (118 existing tests plus 6 new). Every existing test must still pass with only the import-line swap and the patch retargets applied — that is the real assertion of this task: the shim resolves `patch("strix_battery.StrixDevice")` and every `patch("strix_battery.<module>.<attr>")` to the same module objects the code under test uses, and `from main import (...)` still reaches the package. A silently ineffective patch would leave a test passing for the wrong reason, which is why the retargeted sites are counted in Step 8, not eyeballed.
 
-- [ ] **Step 10: Run the other three gates**
+- [x] **Step 10: Run the other three gates**
 
 Run: `uv run --group dev ruff check . && uv run --group dev ruff format --check . && uv run --group dev ty check`
 
 Expected: all pass. Note `tests/test_main.py` may want the `strix_battery` import block in isort's order; ruff's `I` rule is the arbiter — fix the order it asks for, nothing else.
 
-- [ ] **Step 11: Verify the build and the entry points**
+- [x] **Step 11: Verify the build and the entry points**
 
 ```bash
 uv sync
@@ -334,7 +334,7 @@ uv run strix-battery --json; echo "exit=$?"
 
 Expected: both print `{"status": "offline", "text": "Headset offline"}` and exit `1` (no headset on this machine). CI's `python -c "import main"` smoke check is covered by the same shim.
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git add -A
@@ -355,7 +355,7 @@ git commit -m "refactor: move the five top-level modules into the strix_battery 
 
 **Context you need:** `start_tray` (`strix_battery/tray.py`) has exactly one failure path today: `run_pyqt_tray` raises `ImportError` — which is what a *missing* PyQt6 produces — and the handler prints "Error: 'PyQt6' is required for tray mode. Install it by running: uv add PyQt6 pillow". A PyQt6 that is installed but broken (a broken Qt install, a missing platform plugin like `xcb` on a minimal desktop) raises the same `ImportError` and gets the same advice, which tells that user to install something they already have. That is the P3 finding's defect, unchanged by the split. The discriminator already exists in the stdlib: `importlib.util.find_spec("PyQt6")` checks *presence*, not importability — a broken install still produces a spec, a missing one does not. Put that check in the `except` branch (not a pre-check before the call: the current structure deliberately tries first, and a pre-check would restore a second structure the tray work removed), and print exactly one message either way. The missing-PyQt6 text stays byte-identical to today — the three old `print()` calls concatenate to one constant printed with the default `end`, trailing double newline included.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Insert this class immediately before `class SleepDurationTests(unittest.TestCase):`:
 
@@ -415,7 +415,7 @@ message the code may print. `start_tray` is imported at the top of the file from
 `main`, which re-exports the package — the same function object the tray code
 defines, so the patches bite.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run --no-sync python -m unittest tests.test_main.StartTrayMessageTests -v`
 
@@ -426,7 +426,7 @@ message says "is required for tray mode" and never names the cause.
 message). That is the correct red state: the missing-case behaviour already
 holds and is pinned; the broken-case behaviour is what is missing.
 
-- [ ] **Step 3: Split the message in `strix_battery/tray.py`**
+- [x] **Step 3: Split the message in `strix_battery/tray.py`**
 
 Add `import importlib.util` to the stdlib import block at the top of the file (isort order: `importlib.util` before `signal`). Then, immediately after the glyph constants, add:
 
@@ -473,7 +473,7 @@ def start_tray(device: StrixDevice):
 `\n` and `print` adds the second, so the missing-PyQt6 branch's output is
 byte-identical to the three `print()` calls it replaces.
 
-- [ ] **Step 4: Run the full suite to verify it passes**
+- [x] **Step 4: Run the full suite to verify it passes**
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
@@ -483,7 +483,7 @@ existing `test_start_tray_exits_when_pyqt6_is_not_installed` does not patch
 the *broken-install* branch — its assertions ("PyQt6" in the output, exit 1)
 hold on both messages, which is why it needed no edit.
 
-- [ ] **Step 5: Verify both messages by hand**
+- [x] **Step 5: Verify both messages by hand**
 
 ```bash
 uv run --no-sync python - <<'PY'
@@ -516,13 +516,13 @@ cause, and does **not** print "is required for tray mode"; the `missing` case
 prints exactly the old three lines. Each prints exactly one `Error:` and exits
 `1`.
 
-- [ ] **Step 6: Run the other three gates**
+- [x] **Step 6: Run the other three gates**
 
 Run: `uv run --group dev ruff check . && uv run --group dev ruff format --check . && uv run --group dev ty check`
 
 Expected: all pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A

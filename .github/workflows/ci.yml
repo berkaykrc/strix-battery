@@ -24,6 +24,22 @@ jobs:
       - name: Confirm the suite did not hang
         run: uv run python -c "import main; print('import ok')"
 
+      # The package exists so that nothing generic lands in site-packages; a
+      # packaging slip would ship that silently with a green test job.
+      - name: Confirm no top-level modules ship in the wheel
+        run: |
+          uv build
+          uv run python - <<'PY'
+          import glob
+          import zipfile
+
+          wheel = sorted(glob.glob("dist/*.whl"))[-1]
+          names = zipfile.ZipFile(wheel).namelist()
+          top_level = [n for n in names if n.endswith(".py") and "/" not in n]
+          assert not top_level, f"top-level modules in wheel: {top_level}"
+          print("packaged:", sorted(n for n in names if n.startswith("strix_battery/")))
+          PY
+
   lint:
     runs-on: ubuntu-latest
     steps:

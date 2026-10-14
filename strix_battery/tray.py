@@ -184,7 +184,14 @@ def start_tray(device: StrixDevice):
         # `find_spec` checks presence, not importability: a PyQt6 that is
         # installed but broken still produces a spec, and that user needs
         # different advice from one who never installed it.
-        if importlib.util.find_spec("PyQt6") is None:
+        try:
+            missing = importlib.util.find_spec("PyQt6") is None
+        except ValueError:
+            # find_spec raises when the name is in sys.modules without a spec
+            # (a fake, or a half-finished import). "Cannot tell" is not a clean
+            # missing install, so it gets the unusable advice too.
+            missing = False
+        if missing:
             print(PYQT6_MISSING_HINT)
         else:
             print(PYQT6_UNUSABLE_HINT.format(error=exc))

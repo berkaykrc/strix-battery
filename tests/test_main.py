@@ -7,6 +7,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from types import ModuleType
 from typing import ClassVar
@@ -30,6 +31,29 @@ from main import (
     validate_sleep_minutes,
 )
 from strix_battery import battery, device, icon, tray
+
+
+class PackagingConfigTests(unittest.TestCase):
+    """The P2 fix lives in pyproject.toml; pin it where a regression would show."""
+
+    def setUp(self):
+        self.config = tomllib.loads(
+            (pathlib.Path(main.__file__).parent / "pyproject.toml").read_text()
+        )
+
+    def test_the_console_script_points_at_the_package_entry_point(self):
+        # A typo here installs a wheel that fails on first run, and the
+        # entry-point test cannot see it: it imports the module, not this
+        # string.
+        self.assertEqual(
+            self.config["project"]["scripts"]["strix-battery"],
+            "strix_battery.cli:main",
+        )
+
+    def test_nothing_is_installed_at_the_top_level(self):
+        setuptools_config = self.config["tool"]["setuptools"]
+        self.assertNotIn("py-modules", setuptools_config)
+        self.assertEqual(setuptools_config["packages"], ["strix_battery"])
 
 
 class PackageLayoutTests(unittest.TestCase):
@@ -105,9 +129,10 @@ class PackageLayoutTests(unittest.TestCase):
                 )
 
     def test_the_shim_beats_a_decoy_main_on_the_path(self):
-        # The whole point: a top-level `main` must no longer be load-bearing.
-        # The repo root is sys.path[0] for `-c`, so the shim must win over a
-        # decoy placed on PYTHONPATH, and what wins must be the package's.
+        # What this really proves: the shim that wins is the repo's, and what
+        # it re-exports is the package's. (The decoy cannot win by
+        # construction — for `-c` the cwd is sys.path[0] and PYTHONPATH comes
+        # after it — so the useful assertion is that it never loaded at all.)
         import os
         import subprocess
         import sys
@@ -128,7 +153,9 @@ class PackageLayoutTests(unittest.TestCase):
                 env=env,
                 timeout=30,
             )
-        self.assertNotIn("decoy won", result.stdout)
+        # `SystemExit("...")` prints to stderr, so stdout could never contain it.
+        self.assertNotIn("decoy won", result.stderr)
+        self.assertNotIn(tmp, result.stdout)
         self.assertIn("strix_battery.device", result.stdout)
 
     def test_the_shim_exposes_the_private_helper_the_suite_patches(self):
@@ -1348,6 +1375,21 @@ class StartTrayMessageTests(unittest.TestCase):
             with self.subTest(found=found):
                 message = self.messages_for(found)
                 self.assertEqual(message.count("Error:"), 1)
+
+    def test_a_pyqt6_that_cannot_be_inspected_is_treated_as_unusable(self):
+        # install_fake_pyqt6-style sys.modules entries have `__spec__ is None`,
+        # and find_spec raises ValueError on those. This handler's whole job is
+        # to explain the failure, so it must not raise instead.
+        printed = []
+        with (
+            patch.dict(sys.modules, {"PyQt6": ModuleType("PyQt6")}),
+            patch("strix_battery.tray.run_pyqt_tray", side_effect=ImportError("boom")),
+            patch("builtins.print", side_effect=printed.append),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            start_tray(StrixDevice())
+        self.assertEqual(raised.exception.code, 1)
+        self.assertIn("installed but could not be used", " ".join(printed))
 
 
 class SleepDurationTests(unittest.TestCase):
