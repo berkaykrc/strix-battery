@@ -14,7 +14,9 @@ from unittest.mock import patch
 
 import battery
 import device
+import icon
 import main
+import tray
 from main import (
     ERROR_OFFLINE,
     ERROR_PERMISSION,
@@ -527,7 +529,7 @@ class QtTrayAvailabilityTests(unittest.TestCase):
         printed = []
         with (
             patch(
-                "main.run_pyqt_tray", side_effect=ImportError("No module named 'PyQt6'")
+                "tray.run_pyqt_tray", side_effect=ImportError("No module named 'PyQt6'")
             ),
             patch("builtins.print", side_effect=printed.append),
             self.assertRaises(SystemExit) as raised,
@@ -880,17 +882,37 @@ class FakeQtTimer:
         self.scheduled.append((delay, callback))
 
 
+class TrayLayerTests(unittest.TestCase):
+    """The tray presentation layer must be reachable only through `tray`/`icon`."""
+
+    def test_the_tray_lives_in_its_own_modules(self):
+        self.assertIs(main.run_pyqt_tray, tray.run_pyqt_tray)
+        self.assertIs(main.start_tray, tray.start_tray)
+        self.assertIs(main.render_tray_icon, icon.render_tray_icon)
+        self.assertIs(main.pil_to_qpixmap, icon.pil_to_qpixmap)
+
+    def test_a_patched_signal_reaches_the_shutdown_helper(self):
+        # `patch("tray.signal", fake)` rebinds a name in main's namespace. Once
+        # the helper lives in tray.py that patch would apply and stub nothing.
+        controller = FakeSignalController(None)
+        with patch("tray.signal", controller):
+            main._run_qt_app_with_sigint_shutdown(FakeQtApp(), FakeQtTimer(), None)
+        self.assertTrue(
+            controller.registrations, "the fake signal module was never installed"
+        )
+
+
 class QtSignalShutdownTests(unittest.TestCase):
     def run_app(self, app, timer, signal_module):
         run_app = getattr(main, "_run_qt_app_with_sigint_shutdown", None)
         self.assertIsNotNone(run_app, "Qt SIGINT lifecycle helper is missing")
-        with patch("main.signal", signal_module):
+        with patch("tray.signal", signal_module):
             return run_app(app, timer)
 
     def run_app_with_setup(self, app, timer, signal_module, before_exec):
         run_app = getattr(main, "_run_qt_app_with_sigint_shutdown", None)
         self.assertIsNotNone(run_app, "Qt SIGINT lifecycle helper is missing")
-        with patch("main.signal", signal_module):
+        with patch("tray.signal", signal_module):
             try:
                 return run_app(app, timer, before_exec)
             except TypeError as exc:
