@@ -12,6 +12,7 @@ from types import ModuleType
 from typing import ClassVar
 from unittest.mock import patch
 
+import battery
 import main
 from main import (
     ERROR_OFFLINE,
@@ -579,6 +580,11 @@ class DischargeCurveTests(unittest.TestCase):
     """A piecewise curve replaces the linear map; these pin its guarantees."""
 
     LINEAR = ((3300, 0), (4150, 100))
+
+    def test_the_discharge_curve_lives_in_the_battery_module(self):
+        self.assertIs(main.mv_to_percent, battery.mv_to_percent)
+        self.assertIs(main.load_discharge_curve, battery.load_discharge_curve)
+        self.assertIs(main.parse_discharge_curve, battery.parse_discharge_curve)
 
     def test_the_shipped_table_reproduces_the_linear_map_exactly(self):
         # Task 1 must be behaviour-preserving. If this fails, the default table
