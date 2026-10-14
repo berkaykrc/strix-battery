@@ -47,7 +47,7 @@ EXIT_OFFLINE = 1
 EXIT_USAGE = 2
 
 
-def render_json_status(st) -> str:
+def render_json_status(st: dict | None) -> str:
     """Render the single JSON line a panel script consumes.
 
     Returned rather than printed so the exact bytes are assertable in a test.
@@ -67,29 +67,15 @@ def render_json_status(st) -> str:
     )
 
 
-def render_text_status(st) -> str:
+def render_text_status(st: dict) -> str:
     """Render the human-facing report. The offline case is an error, not a report."""
     state = "Charging" if st["charging"] else "On battery"
-    L = chr(10)
     return (
-        "--- ROG Strix Go 2.4 Status ---"
-        + L
-        + "Battery: "
-        + str(st["percentage"])
-        + "% ("
-        + str(st["voltage"])
-        + " mV)"
-        + L
-        + "Power status: "
-        + state
-        + L
-        + "Sleep timer: "
-        + str(st["sleep_min"])
-        + " minutes"
-        + L
-        + "Device node: "
-        + str(st["path"])
-        + L
+        "--- ROG Strix Go 2.4 Status ---\n"
+        f"Battery: {st['percentage']}% ({st['voltage']} mV)\n"
+        f"Power status: {state}\n"
+        f"Sleep timer: {st['sleep_min']} minutes\n"
+        f"Device node: {st['path']}\n"
     )
 
 

@@ -825,26 +825,12 @@ class FakeDevice:
         self.sleep_result = True
         self.sleep_calls = []
         self.query_result = self.status
-        self.query_error = None
-        self.after_query = None
-        self.query_threads = []
-        import threading
-
-        self.query_finished = threading.Event()
 
     def set_sleep(self, minutes):
         self.sleep_calls.append(minutes)
         return self.sleep_result
 
     def query(self):
-        import threading
-
-        self.query_threads.append(threading.get_ident())
-        self.query_finished.set()
-        if self.query_error is not None:
-            raise self.query_error
-        if self.after_query is not None:
-            self.after_query()
         return self.query_result
 
 
@@ -962,6 +948,38 @@ class ExitCodeContractTests(unittest.TestCase):
         self.assertIn("Power status: Charging", out)
         self.assertIn("Sleep timer: 30 minutes", out)
         self.assertIn("Device node: /dev/hidraw3", out)
+
+    def test_json_output_is_byte_exact(self):
+        # assertIn-line checks survive a reordered or reworded report; the
+        # plan's constraint is byte-identical stdout, so pin the whole string.
+        _, out = self.run_main(["--json"], self.ONLINE)
+        self.assertEqual(
+            out,
+            json.dumps(
+                {
+                    "status": "online",
+                    "percentage": 72,
+                    "voltage": 3904,
+                    "charging": True,
+                    "sleep_min": 30,
+                    "text": "%72 (Charging)",
+                }
+            )
+            + "\n",
+        )
+
+    def test_the_text_report_is_byte_exact(self):
+        # A missing trailing newline or a dropped blank line passes every
+        # assertIn above, so this is the only test that guards the promise.
+        _, out = self.run_main([], self.ONLINE)
+        self.assertEqual(
+            out,
+            "--- ROG Strix Go 2.4 Status ---\n"
+            "Battery: 72% (3904 mV)\n"
+            "Power status: Charging\n"
+            "Sleep timer: 30 minutes\n"
+            "Device node: /dev/hidraw3\n",
+        )
 
     def test_json_output_is_a_single_parseable_line(self):
         _, out = self.run_main(["--json"], self.ONLINE)
