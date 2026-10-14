@@ -55,7 +55,7 @@ This task makes the CLI path's *attribution* explicit and testable, and gives `s
 
 The distinction to encode: an invalid `minutes` is a caller error (reject loudly, exit 2, argparse's own format), while a valid `minutes` that cannot be delivered is a device problem (message, exit 1).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add `sys` and `io` to the test file's imports if not present, then insert this class immediately before `class SleepDurationTests(unittest.TestCase):`:
 
@@ -122,13 +122,13 @@ and add the method to `FakeDevice`, immediately after its existing `query` metho
         return self.sleep_result
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run --no-sync python -m unittest tests.test_main.CliSleepTests -v`
 
 Expected: `AttributeError: 'FakeDevice' object has no attribute 'sleep_result'`. Correct red state — the fixture does not exist yet.
 
-- [ ] **Step 3: Make the sleep failure attributable**
+- [x] **Step 3: Make the sleep failure attributable**
 
 In `main.py`, replace the whole `--set-sleep` branch of `main()` with:
 
@@ -151,7 +151,7 @@ In `main.py`, replace the whole `--set-sleep` branch of `main()` with:
 
 The `success` variable and the duplicated print collapse into one path. The two `print` calls are on mutually exclusive branches, so stdout is unchanged.
 
-- [ ] **Step 4: Add the exit-code constants**
+- [x] **Step 4: Add the exit-code constants**
 
 In `main.py`, immediately after the `MAX_SLEEP_MINUTES = 1092` line, add:
 
@@ -165,13 +165,13 @@ EXIT_USAGE = 2
 
 `EXIT_USAGE` documents argparse's own convention. It is not raised by hand anywhere in this plan — `parser.error` produces it.
 
-- [ ] **Step 5: Run the full suite to verify it passes**
+- [x] **Step 5: Run the full suite to verify it passes**
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
 Expected: `Ran 58 tests ... OK`. (53 existing plus 5 new.)
 
-- [ ] **Step 6: Verify the real CLI, not just the fakes**
+- [x] **Step 6: Verify the real CLI, not just the fakes**
 
 ```bash
 uv run --no-sync python main.py --set-sleep -1; echo "exit=$?"
@@ -180,7 +180,7 @@ uv run --no-sync python main.py --set-sleep 99999; echo "exit=$?"
 
 Expected: both print argparse's usage block to stderr ending in the "must be between 0 and 1092 minutes" message, and both report `exit=2`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add main.py tests/test_main.py
@@ -214,7 +214,7 @@ A Waybar module that runs the command and keys on a non-zero exit to render a fa
 
 Both output strings must stay **byte-identical**. Only the exit code moves.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Insert this class immediately before `class SleepDurationTests(unittest.TestCase):`:
 
@@ -302,13 +302,13 @@ class ExitCodeContractTests(unittest.TestCase):
 
 and add `self.query_result = self.status` to its `__init__`, immediately after the `self.status = {...}` block. The default preserves every existing test, all of which expect the old canned status dict.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run --no-sync python -m unittest tests.test_main.ExitCodeContractTests -v`
 
 Expected: `test_both_modes_report_offline_with_the_same_exit_code` fails with `0 != 1`. That is the correct red state, and its failure message is the bug report.
 
-- [ ] **Step 3: Extract the two renderers**
+- [x] **Step 3: Extract the two renderers**
 
 In `main.py`, immediately before `def main():`, add:
 
@@ -345,7 +345,7 @@ def render_text_status(st) -> str:
 
 `render_text_status` takes a non-`None` `st` only. Handling `None` inside would force a "not a report" string through a function named "report".
 
-- [ ] **Step 4: Use them in `main` and unify the exit code**
+- [x] **Step 4: Use them in `main` and unify the exit code**
 
 In `main.py`, replace everything from the `st = device.query()` line through the end of the function (the `# 3. Query status` section) with:
 
@@ -367,13 +367,13 @@ In `main.py`, replace everything from the `st = device.query()` line through the
 
 The `end=""` matters: `render_text_status` already ends its last line with `\n`, and `print` would add a second one. The byte count of stdout is unchanged from `abcb770` in every branch.
 
-- [ ] **Step 5: Run the full suite to verify it passes**
+- [x] **Step 5: Run the full suite to verify it passes**
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
 Expected: `Ran 64 tests ... OK`. (58 from Task 1, plus 6 new.)
 
-- [ ] **Step 6: Verify the real CLI, both modes, offline**
+- [x] **Step 6: Verify the real CLI, both modes, offline**
 
 ```bash
 uv run --no-sync python main.py --json; echo "json exit=$?"
@@ -388,7 +388,7 @@ uv run --no-sync python main.py --json | od -c | tail -3
 
 Expected: the line ends with `"Headset offline"}\n` — one trailing newline, not two.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add main.py tests/test_main.py
@@ -412,3 +412,34 @@ Measured on the host running this plan, `abcb770`, with `glob.glob` patched to r
 - **The tray path's `last_error` handling.** The Qt tray backend already uses `offline_message`, which is correct and already tested. This plan is the CLI only.
 - **`main.py`'s `except ImportError` around `run_pyqt_tray`.** The tray-availability guard raises `SystemExit`, which correctly escapes this. Not a defect.
 - **Packaging the module** (`py-modules = ["main"]`). Separate plan.
+
+## Execution record (2026-10-14)
+
+The steps above are checked off because they were carried out, but four of them
+did not match the code as it stood, and the plan's own numbers were stale. What
+actually happened:
+
+1. **Baseline drift.** The plan is written against `abcb770`; it was executed at
+   `d0b674e`, after the module split. The suite was already **82** tests, not 53,
+   so the step checkpoints are 82 -> 87 (Task 1) and 87 -> 93 (Task 2), not
+   58 and 64.
+2. **Task 1, Step 1 - `FakeDevice` did not exist.** The plan says it "exists at
+   `tests/test_main.py:597` and has no `set_sleep`". The module split removed it.
+   It was written fresh, carrying the `sleep_result` / `sleep_calls` / `set_sleep`
+   surface the step prescribes, so the step's intent held and only its premise
+   was wrong.
+3. **Task 1, Step 4 - no `MAX_SLEEP_MINUTES = 1092` line in `main.py`.** It moved
+   to `device.py` during the split, so `EXIT_OK` / `EXIT_OFFLINE` / `EXIT_USAGE`
+   went after the import block in `main.py`, which is where the global constraint
+   (production code stays in `main.py`) puts them.
+4. **Task 2 - the Interfaces text contradicts Steps 3 and 4.** The Interfaces say
+   `render_json_status` returns the JSON line "including the trailing newline",
+   while Steps 3 and 4 print it with a bare `print()`, which would emit two.
+   Steps 3 and 4 were followed: the renderer returns no trailing newline and
+   `print` supplies the single one the plan's own `od -c` check requires.
+   `render_text_status` does end with a newline and is printed with `end=""`.
+
+Beyond the plan, the post-review fix pass added three byte-exact output pins that
+no step asked for (`test_json_output_is_byte_exact`, `test_the_text_report_is_byte_exact`,
+`test_text_offline_output_is_unchanged`; suite 96), and one follow-up commit cleared
+the deferred review minors. The version bumped once, in the change's first commit.
