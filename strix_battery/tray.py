@@ -1,3 +1,4 @@
+import importlib.util
 import signal
 import sys
 
@@ -8,6 +9,25 @@ from .icon import pil_to_qpixmap, render_tray_icon
 HEADSET_ICON = "\U0001f3a7"
 SLEEP_ICON = "\u23f1\ufe0f"
 NOISE_REDUCTION_ICON = "\U0001f507"
+
+# `start_tray` fails in two distinct ways and they need different advice.
+# A missing PyQt6 is fixed by installing it. A PyQt6 that is installed but
+# raises on import is a broken Qt install or a missing platform plugin, and
+# telling that user to install it again changes nothing.
+PYQT6_MISSING_HINT = (
+    "\nError: 'PyQt6' is required for tray mode.\n"
+    "Install it by running:\n"
+    "  uv add PyQt6 pillow\n"
+)
+
+PYQT6_UNUSABLE_HINT = (
+    "\nError: 'PyQt6' is installed but could not be used for tray mode.\n"
+    "This usually means a broken Qt install or a missing platform plugin;\n"
+    "reinstalling PyQt6 alone may not fix it.\n"
+    "Cause: {error}\n"
+    "To reinstall PyQt6 and its dependencies anyway, run:\n"
+    "  uv add PyQt6 pillow\n"
+)
 
 
 def _run_qt_app_with_sigint_shutdown(app, timer, before_exec=None):
@@ -160,10 +180,12 @@ def start_tray(device: StrixDevice):
     """Run the PyQt6 tray, or explain that it is unavailable."""
     try:
         run_pyqt_tray(device)
-    except ImportError:
-        # The only import that can fail here is PyQt6 itself: pillow ships in
-        # the base dependencies and a tray needs it to draw the icon.
-        print("\nError: 'PyQt6' is required for tray mode.")
-        print("Install it by running:")
-        print("  uv add PyQt6 pillow\n")
+    except ImportError as exc:
+        # `find_spec` checks presence, not importability: a PyQt6 that is
+        # installed but broken still produces a spec, and that user needs
+        # different advice from one who never installed it.
+        if importlib.util.find_spec("PyQt6") is None:
+            print(PYQT6_MISSING_HINT)
+        else:
+            print(PYQT6_UNUSABLE_HINT.format(error=exc))
         sys.exit(1)

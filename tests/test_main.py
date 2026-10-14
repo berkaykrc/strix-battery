@@ -1300,6 +1300,56 @@ class SleepPacketTests(unittest.TestCase):
                 )
 
 
+class StartTrayMessageTests(unittest.TestCase):
+    """A broken Qt install and a missing Qt need different advice."""
+
+    def messages_for(self, pyqt6_found):
+        printed = []
+        found = object() if pyqt6_found else None
+
+        def fake_run_pyqt_tray(device):
+            raise ImportError("No module named 'PyQt6.QtWidgets'")
+
+        with (
+            patch("builtins.print", side_effect=printed.append),
+            patch("strix_battery.tray.importlib.util.find_spec", return_value=found),
+            patch("strix_battery.tray.run_pyqt_tray", side_effect=fake_run_pyqt_tray),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            start_tray(StrixDevice())
+        self.assertEqual(raised.exception.code, 1)
+        return " ".join(printed)
+
+    def test_a_missing_pyqt6_keeps_the_install_instructions(self):
+        message = self.messages_for(pyqt6_found=False)
+        self.assertIn("is required for tray mode", message)
+        self.assertIn("uv add PyQt6", message)
+        self.assertNotIn(
+            "could not be used",
+            message,
+            "a missing PyQt6 is fixed by installing it; say so",
+        )
+
+    def test_a_broken_pyqt6_is_not_told_to_install_itself(self):
+        message = self.messages_for(pyqt6_found=True)
+        self.assertIn("installed but could not be used", message)
+        self.assertNotIn(
+            "is required for tray mode",
+            message,
+            "telling a user with a broken Qt to install it again changes nothing",
+        )
+
+    def test_a_broken_pyqt6_names_the_real_cause(self):
+        message = self.messages_for(pyqt6_found=True)
+        self.assertIn("No module named 'PyQt6.QtWidgets'", message)
+
+    def test_each_case_prints_exactly_one_message(self):
+        for found in (True, False):
+            with self.subTest(found=found):
+                message = self.messages_for(found)
+                self.assertEqual(message.count("Error:"), 1)
+
+
 class SleepDurationTests(unittest.TestCase):
     def test_accepts_values_that_fit_the_hid_field(self):
         self.assertEqual(validate_sleep_minutes(0), 0)
