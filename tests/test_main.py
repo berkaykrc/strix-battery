@@ -824,7 +824,7 @@ class FakeDevice:
         }
         self.sleep_result = True
         self.sleep_calls = []
-        self.query_result = self.status
+        self.query_result = dict(self.status)
 
     def set_sleep(self, minutes):
         self.sleep_calls.append(minutes)
@@ -834,24 +834,29 @@ class FakeDevice:
         return self.query_result
 
 
+def run_cli(argv, device=None):
+    """Run main() with a stub device; return (exit_code, stdout, stderr)."""
+    device = device or FakeDevice()
+    out, err = io.StringIO(), io.StringIO()
+    with (
+        patch.object(sys, "argv", ["strix-battery", *argv]),
+        patch("main.StrixDevice", return_value=device),
+        contextlib.redirect_stdout(out),
+        contextlib.redirect_stderr(err),
+    ):
+        try:
+            main.main()
+            code = 0
+        except SystemExit as exc:
+            code = exc.code
+    return code, out.getvalue(), err.getvalue()
+
+
 class CliSleepTests(unittest.TestCase):
     """CLI sleep distinction between bad args and absent device."""
 
     def run_main(self, argv, device=None):
-        device = device or FakeDevice()
-        out, err = io.StringIO(), io.StringIO()
-        with (
-            patch.object(sys, "argv", ["strix-battery", *argv]),
-            patch("main.StrixDevice", return_value=device),
-            contextlib.redirect_stdout(out),
-            contextlib.redirect_stderr(err),
-        ):
-            try:
-                main.main()
-                code = 0
-            except SystemExit as exc:
-                code = exc.code
-        return code, out.getvalue(), err.getvalue()
+        return run_cli(argv, device)
 
     def test_a_negative_duration_is_rejected_as_a_usage_error(self):
         code, _, err = self.run_main(["--set-sleep", "-1"])
@@ -889,19 +894,8 @@ class ExitCodeContractTests(unittest.TestCase):
     def run_main(self, argv, query_result):
         device = FakeDevice()
         device.query_result = query_result
-        out = io.StringIO()
-        with (
-            patch.object(sys, "argv", ["strix-battery", *argv]),
-            patch("main.StrixDevice", return_value=device),
-            contextlib.redirect_stdout(out),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            try:
-                main.main()
-                code = 0
-            except SystemExit as exc:
-                code = exc.code
-        return code, out.getvalue()
+        code, out, _ = run_cli(argv, device)
+        return code, out
 
     ONLINE: ClassVar[dict] = {
         "percentage": 72,
@@ -936,12 +930,16 @@ class ExitCodeContractTests(unittest.TestCase):
         )
 
     def test_json_online_output_is_unchanged(self):
+        # Readable form of the payload; test_json_output_is_byte_exact is the
+        # guard, so this one is documentation, not coverage.
         _, out = self.run_main(["--json"], self.ONLINE)
         self.assertEqual(json.loads(out)["percentage"], 72)
         self.assertEqual(json.loads(out)["text"], "%72 (Charging)")
         self.assertEqual(json.loads(out)["sleep_min"], 30)
 
     def test_text_online_output_is_unchanged(self):
+        # Readable form of the report; test_the_text_report_is_byte_exact is
+        # the guard, so this one is documentation, not coverage.
         _, out = self.run_main([], self.ONLINE)
         self.assertIn("--- ROG Strix Go 2.4 Status ---", out)
         self.assertIn("Battery: 72% (3904 mV)", out)
@@ -1462,7 +1460,7 @@ class NoiseReductionCliTests(unittest.TestCase):
             patch.object(device, "set_noise_reduction", return_value=False),
         ):
             code, out = self.run_main(["--noise-reduction", "on"])
-        self.assertEqual(code, 1)
+        self.assertEqual(code, main.EXIT_OFFLINE)
         self.assertIn("could not be reached", out[0])
 
     def test_an_unknown_word_is_rejected_before_any_send(self):

@@ -52,7 +52,7 @@ def render_json_status(st: dict | None) -> str:
 
     Returned rather than printed so the exact bytes are assertable in a test.
     """
-    if st is None:
+    if not st:
         return json.dumps({"status": "offline", "text": "Headset offline"})
     charge_str = " (Charging)" if st["charging"] else ""
     return json.dumps(
@@ -68,7 +68,11 @@ def render_json_status(st: dict | None) -> str:
 
 
 def render_text_status(st: dict) -> str:
-    """Render the human-facing report. The offline case is an error, not a report."""
+    """Render the human-facing report. The offline case is an error, not a report.
+
+    The returned string ends with a newline, so callers must print it
+    with end="" instead of a bare print().
+    """
     state = "Charging" if st["charging"] else "On battery"
     return (
         "--- ROG Strix Go 2.4 Status ---\n"
@@ -139,18 +143,18 @@ def main():
             )
         else:
             print("Error: Headset receiver could not be reached.")
-            sys.exit(1)
+            sys.exit(EXIT_OFFLINE)
         return
 
     st = device.query()
 
     if args.json:
         print(render_json_status(st))
-        if st is None:
+        if not st:
             sys.exit(EXIT_OFFLINE)
         return
 
-    if st is None:
+    if not st:
         print("ROG Strix Go 2.4 receiver or headset is offline/out of range.")
         sys.exit(EXIT_OFFLINE)
 
