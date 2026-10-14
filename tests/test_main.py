@@ -68,7 +68,10 @@ class PackageLayoutTests(unittest.TestCase):
         )
 
     def test_the_shim_still_runs_as_a_script(self):
-        # The README documents `uv run python main.py --json`.
+        # The README documents `uv run python main.py --json`. This runs the
+        # real CLI, so the device state is whatever this machine has: assert the
+        # plumbing (JSON out, exit code agreeing with the status), not that the
+        # headset happens to be absent.
         import subprocess
         import sys
 
@@ -78,12 +81,13 @@ class PackageLayoutTests(unittest.TestCase):
             text=True,
             timeout=30,
         )
+        payload = json.loads(result.stdout)  # raises if the shim never ran
+        self.assertIn(payload["status"], ("online", "offline"))
         self.assertEqual(
             result.returncode,
-            1,
+            0 if payload["status"] == "online" else 1,
             f"the shim must still reach main(); stderr was: {result.stderr}",
         )
-        self.assertIn("offline", result.stdout)
 
     def test_the_console_script_entry_point_resolves(self):
         import importlib
