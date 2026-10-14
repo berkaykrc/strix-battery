@@ -12,11 +12,8 @@ from types import ModuleType
 from typing import ClassVar
 from unittest.mock import patch
 
-import battery
-import device
-import icon
 import main
-import tray
+import strix_battery
 from main import (
     ERROR_OFFLINE,
     ERROR_PERMISSION,
@@ -32,6 +29,115 @@ from main import (
     start_tray,
     validate_sleep_minutes,
 )
+from strix_battery import battery, device, icon, tray
+
+
+class PackageLayoutTests(unittest.TestCase):
+    """A generic top-level `main` in site-packages is the reason for this change."""
+
+    def test_the_package_is_importable_and_not_a_top_level_module(self):
+        self.assertTrue(strix_battery.__file__.endswith("strix_battery/__init__.py"))
+        self.assertNotEqual(
+            getattr(strix_battery, "__file__", ""),
+            main.__file__,
+            "the package and the shim must be two files, not an alias",
+        )
+
+    def test_the_shim_still_runs_as_a_script(self):
+        # The README documents `uv run python main.py --json`.
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [sys.executable, "main.py", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(
+            result.returncode,
+            1,
+            f"the shim must still reach main(); stderr was: {result.stderr}",
+        )
+        self.assertIn("offline", result.stdout)
+
+    def test_the_console_script_entry_point_resolves(self):
+        import importlib
+
+        module = importlib.import_module("strix_battery.cli")
+        self.assertTrue(callable(module.main))
+
+    def test_every_name_the_suite_imports_is_still_exported(self):
+        import importlib
+
+        for name in [
+            "DEFAULT_DISCHARGE_CURVE",
+            "ERROR_OFFLINE",
+            "ERROR_PERMISSION",
+            "HEADSET_ICON",
+            "HIDIOCGFEATURE_64",
+            "HIDIOCGRAWINFO",
+            "MAX_SLEEP_MINUTES",
+            "NOTIFY_TIMEOUT_SECONDS",
+            "QUERY_PACKET",
+            "SLEEP_ICON",
+            "STRIX_PIDS",
+            "StrixDevice",
+            "load_discharge_curve",
+            "main",
+            "mv_to_percent",
+            "noise_reduction_state_path",
+            "offline_message",
+            "parse_discharge_curve",
+            "pil_to_qpixmap",
+            "render_tray_icon",
+            "run_pyqt_tray",
+            "start_tray",
+            "validate_sleep_minutes",
+        ]:
+            with self.subTest(name=name):
+                self.assertTrue(
+                    hasattr(strix_battery, name), f"strix_battery lost {name}"
+                )
+                self.assertTrue(
+                    hasattr(importlib.import_module("strix_battery.cli"), name),
+                    f"strix_battery.cli lost {name}",
+                )
+
+    def test_the_shim_beats_a_decoy_main_on_the_path(self):
+        # The whole point: a top-level `main` must no longer be load-bearing.
+        # The repo root is sys.path[0] for `-c`, so the shim must win over a
+        # decoy placed on PYTHONPATH, and what wins must be the package's.
+        import os
+        import subprocess
+        import sys
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "main.py").write_text("raise SystemExit('decoy won')\n")
+            env = {**os.environ, "PYTHONPATH": tmp}
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import main; print(main.__file__); print(main.StrixDevice.__module__)",
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=30,
+            )
+        self.assertNotIn("decoy won", result.stdout)
+        self.assertIn("strix_battery.device", result.stdout)
+
+    def test_the_shim_exposes_the_private_helper_the_suite_patches(self):
+        # `from ... import *` skips underscore names; the suite reaches this one
+        # through `main`.
+        self.assertIs(
+            main._run_qt_app_with_sigint_shutdown,
+            strix_battery._run_qt_app_with_sigint_shutdown,
+        )
 
 
 class MvToPercentTests(unittest.TestCase):
@@ -87,7 +193,7 @@ class PercentageStabilityTests(unittest.TestCase):
     def test_going_offline_clears_the_hold(self):
         device = StrixDevice()
         device.stabilize_percentage(70)
-        with patch("device.glob.glob", return_value=[]):
+        with patch("strix_battery.device.glob.glob", return_value=[]):
             self.assertIsNone(device.query())
         # 69 would have been held at 70 had the hold survived the disconnect.
         self.assertEqual(device.stabilize_percentage(69), 69)
@@ -123,7 +229,7 @@ class NotifyTests(unittest.TestCase):
 
     def test_notify_passes_a_timeout_to_the_subprocess(self):
         device = StrixDevice()
-        with patch("device.subprocess.run") as run:
+        with patch("strix_battery.device.subprocess.run") as run:
             device.notify("ROG Strix Go", "Battery critically low: 12%!")
         self.assertEqual(
             run.call_args.kwargs.get("timeout"),
@@ -134,7 +240,7 @@ class NotifyTests(unittest.TestCase):
     def test_notify_swallows_a_timed_out_notify_send(self):
         device = StrixDevice()
         with patch(
-            "device.subprocess.run",
+            "strix_battery.device.subprocess.run",
             side_effect=subprocess.TimeoutExpired("notify-send", 5),
         ):
             device.notify("ROG Strix Go", "Battery critically low: 12%!")
@@ -142,13 +248,14 @@ class NotifyTests(unittest.TestCase):
     def test_notify_swallows_a_missing_notify_send_binary(self):
         device = StrixDevice()
         with patch(
-            "device.subprocess.run", side_effect=FileNotFoundError("notify-send")
+            "strix_battery.device.subprocess.run",
+            side_effect=FileNotFoundError("notify-send"),
         ):
             device.notify("ROG Strix Go", "Battery critically low: 12%!")
 
     def test_notify_survives_a_failing_notify_send_exit_code(self):
         device = StrixDevice()
-        with patch("device.subprocess.run", return_value=None) as run:
+        with patch("strix_battery.device.subprocess.run", return_value=None) as run:
             device.notify("ROG Strix Go", "Battery critically low: 12%!")
         self.assertIs(run.call_args.kwargs.get("check"), False)
 
@@ -191,9 +298,10 @@ class LastErrorTests(unittest.TestCase):
     def test_permission_denied_on_a_hidraw_node_is_reported_as_a_permission_error(self):
         device = StrixDevice()
         with (
-            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("strix_battery.device.glob.glob", return_value=["/dev/hidraw0"]),
             patch(
-                "device.os.open", side_effect=PermissionError(13, "Permission denied")
+                "strix_battery.device.os.open",
+                side_effect=PermissionError(13, "Permission denied"),
             ),
         ):
             self.assertIsNone(device.query())
@@ -201,15 +309,18 @@ class LastErrorTests(unittest.TestCase):
 
     def test_a_vanished_receiver_is_reported_as_offline(self):
         device = StrixDevice()
-        with patch("device.glob.glob", return_value=[]):
+        with patch("strix_battery.device.glob.glob", return_value=[]):
             self.assertIsNone(device.query())
         self.assertEqual(device.last_error, ERROR_OFFLINE)
 
     def test_a_non_permission_open_failure_is_still_reported_as_offline(self):
         device = StrixDevice()
         with (
-            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
-            patch("device.os.open", side_effect=OSError(19, "No such device")),
+            patch("strix_battery.device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch(
+                "strix_battery.device.os.open",
+                side_effect=OSError(19, "No such device"),
+            ),
         ):
             self.assertIsNone(device.query())
         self.assertEqual(device.last_error, ERROR_OFFLINE)
@@ -217,20 +328,21 @@ class LastErrorTests(unittest.TestCase):
     def test_a_successful_query_clears_a_stale_permission_error(self):
         device = StrixDevice()
         with (
-            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("strix_battery.device.glob.glob", return_value=["/dev/hidraw0"]),
             patch(
-                "device.os.open", side_effect=PermissionError(13, "Permission denied")
+                "strix_battery.device.os.open",
+                side_effect=PermissionError(13, "Permission denied"),
             ),
         ):
             device.query()
         self.assertEqual(device.last_error, ERROR_PERMISSION)
 
         with (
-            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
-            patch("device.os.open", return_value=7),
-            patch("device.fcntl.ioctl", side_effect=asus_ioctl()),
-            patch("device.time.sleep"),
-            patch("device.os.close"),
+            patch("strix_battery.device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("strix_battery.device.os.open", return_value=7),
+            patch("strix_battery.device.fcntl.ioctl", side_effect=asus_ioctl()),
+            patch("strix_battery.device.time.sleep"),
+            patch("strix_battery.device.os.close"),
         ):
             self.assertIsNotNone(device.query())
         self.assertIsNone(device.last_error)
@@ -238,11 +350,14 @@ class LastErrorTests(unittest.TestCase):
     def test_a_denied_node_does_not_hide_the_real_receiver(self):
         device = StrixDevice()
         with (
-            patch("device.glob.glob", return_value=["/dev/hidraw0", "/dev/hidraw1"]),
-            patch("device.os.open", side_effect=deny_first_node),
-            patch("device.os.close"),
-            patch("device.fcntl.ioctl", side_effect=asus_ioctl()),
-            patch("device.time.sleep"),
+            patch(
+                "strix_battery.device.glob.glob",
+                return_value=["/dev/hidraw0", "/dev/hidraw1"],
+            ),
+            patch("strix_battery.device.os.open", side_effect=deny_first_node),
+            patch("strix_battery.device.os.close"),
+            patch("strix_battery.device.fcntl.ioctl", side_effect=asus_ioctl()),
+            patch("strix_battery.device.time.sleep"),
         ):
             _fd, path = device.find_node()
         self.assertEqual(path, "/dev/hidraw1")
@@ -280,9 +395,13 @@ class PermissionHintTests(unittest.TestCase):
     def test_denied_nodes_plus_a_missing_dongle_still_reads_as_offline_first(self):
         device = StrixDevice()
         with (
-            patch("device.glob.glob", return_value=["/dev/hidraw0", "/dev/hidraw1"]),
             patch(
-                "device.os.open", side_effect=PermissionError(13, "Permission denied")
+                "strix_battery.device.glob.glob",
+                return_value=["/dev/hidraw0", "/dev/hidraw1"],
+            ),
+            patch(
+                "strix_battery.device.os.open",
+                side_effect=PermissionError(13, "Permission denied"),
             ),
         ):
             self.assertIsNone(device.query())
@@ -529,7 +648,8 @@ class QtTrayAvailabilityTests(unittest.TestCase):
         printed = []
         with (
             patch(
-                "tray.run_pyqt_tray", side_effect=ImportError("No module named 'PyQt6'")
+                "strix_battery.tray.run_pyqt_tray",
+                side_effect=ImportError("No module named 'PyQt6'"),
             ),
             patch("builtins.print", side_effect=printed.append),
             self.assertRaises(SystemExit) as raised,
@@ -804,7 +924,9 @@ class DeviceLayerTests(unittest.TestCase):
             reached.append(1)
             raise OSError("no state file for this test")
 
-        with patch("device.noise_reduction_state_path", side_effect=fake_path):
+        with patch(
+            "strix_battery.device.noise_reduction_state_path", side_effect=fake_path
+        ):
             main.StrixDevice()
 
         self.assertEqual(len(reached), 1, "the state path was never called")
@@ -840,7 +962,7 @@ def run_cli(argv, device=None):
     out, err = io.StringIO(), io.StringIO()
     with (
         patch.object(sys, "argv", ["strix-battery", *argv]),
-        patch("main.StrixDevice", return_value=device),
+        patch("strix_battery.StrixDevice", return_value=device),
         contextlib.redirect_stdout(out),
         contextlib.redirect_stderr(err),
     ):
@@ -1130,7 +1252,7 @@ class SleepPacketTests(unittest.TestCase):
         # ever relaxed, the overflow must surface here as an error rather than
         # wrap into a timer set to a wrong value with no symptom at all.
         with (
-            patch("device.MAX_SLEEP_MINUTES", 2000),
+            patch("strix_battery.device.MAX_SLEEP_MINUTES", 2000),
             self.assertRaises(RuntimeError),
         ):
             main.build_sleep_packet(1200)
@@ -1152,11 +1274,11 @@ class SleepPacketTests(unittest.TestCase):
 
         device = StrixDevice()
         with (
-            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
-            patch("device.os.open", return_value=7),
-            patch("device.fcntl.ioctl", side_effect=_ioctl),
-            patch("device.time.sleep"),
-            patch("device.os.close"),
+            patch("strix_battery.device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("strix_battery.device.os.open", return_value=7),
+            patch("strix_battery.device.fcntl.ioctl", side_effect=_ioctl),
+            patch("strix_battery.device.time.sleep"),
+            patch("strix_battery.device.os.close"),
             patch.object(device, "notify"),
         ):
             self.assertTrue(device.set_sleep(minutes))
@@ -1260,10 +1382,10 @@ class TrayLayerTests(unittest.TestCase):
         self.assertIs(main.pil_to_qpixmap, icon.pil_to_qpixmap)
 
     def test_a_patched_signal_reaches_the_shutdown_helper(self):
-        # `patch("tray.signal", fake)` rebinds a name in main's namespace. Once
+        # `patch("strix_battery.tray.signal", fake)` rebinds a name in main's namespace. Once
         # the helper lives in tray.py that patch would apply and stub nothing.
         controller = FakeSignalController(None)
-        with patch("tray.signal", controller):
+        with patch("strix_battery.tray.signal", controller):
             main._run_qt_app_with_sigint_shutdown(FakeQtApp(), FakeQtTimer(), None)
         self.assertTrue(
             controller.registrations, "the fake signal module was never installed"
@@ -1274,13 +1396,13 @@ class QtSignalShutdownTests(unittest.TestCase):
     def run_app(self, app, timer, signal_module):
         run_app = getattr(main, "_run_qt_app_with_sigint_shutdown", None)
         self.assertIsNotNone(run_app, "Qt SIGINT lifecycle helper is missing")
-        with patch("tray.signal", signal_module):
+        with patch("strix_battery.tray.signal", signal_module):
             return run_app(app, timer)
 
     def run_app_with_setup(self, app, timer, signal_module, before_exec):
         run_app = getattr(main, "_run_qt_app_with_sigint_shutdown", None)
         self.assertIsNotNone(run_app, "Qt SIGINT lifecycle helper is missing")
-        with patch("tray.signal", signal_module):
+        with patch("strix_battery.tray.signal", signal_module):
             try:
                 return run_app(app, timer, before_exec)
             except TypeError as exc:
@@ -1424,14 +1546,14 @@ class NoiseReductionPacketTests(unittest.TestCase):
         # real file under ~/.config.
         with (
             tempfile.TemporaryDirectory() as d,
-            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
-            patch("device.os.open", return_value=7),
-            patch("device.fcntl.ioctl", side_effect=_ioctl),
-            patch("device.time.sleep"),
-            patch("device.os.close"),
+            patch("strix_battery.device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("strix_battery.device.os.open", return_value=7),
+            patch("strix_battery.device.fcntl.ioctl", side_effect=_ioctl),
+            patch("strix_battery.device.time.sleep"),
+            patch("strix_battery.device.os.close"),
             patch.object(device, "notify"),
             patch(
-                "device.noise_reduction_state_path",
+                "strix_battery.device.noise_reduction_state_path",
                 return_value=pathlib.Path(d) / "noise-reduction.json",
             ),
         ):
@@ -1476,7 +1598,7 @@ class NoiseReductionBehaviourTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         patcher = patch(
-            "device.noise_reduction_state_path",
+            "strix_battery.device.noise_reduction_state_path",
             return_value=pathlib.Path(tmp.name) / "noise-reduction.json",
         )
         patcher.start()
@@ -1485,11 +1607,11 @@ class NoiseReductionBehaviourTests(unittest.TestCase):
     def test_the_new_state_is_recorded_on_the_device(self):
         device = StrixDevice()
         with (
-            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
-            patch("device.os.open", return_value=7),
-            patch("device.fcntl.ioctl", side_effect=asus_ioctl()),
-            patch("device.time.sleep"),
-            patch("device.os.close"),
+            patch("strix_battery.device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("strix_battery.device.os.open", return_value=7),
+            patch("strix_battery.device.fcntl.ioctl", side_effect=asus_ioctl()),
+            patch("strix_battery.device.time.sleep"),
+            patch("strix_battery.device.os.close"),
             patch.object(device, "notify"),
         ):
             device.set_noise_reduction(True)
@@ -1500,16 +1622,17 @@ class NoiseReductionBehaviourTests(unittest.TestCase):
 
     def test_a_missing_receiver_fails_without_claiming_a_state_change(self):
         device = StrixDevice()
-        with patch("device.glob.glob", return_value=[]):
+        with patch("strix_battery.device.glob.glob", return_value=[]):
             self.assertFalse(device.set_noise_reduction(True))
         self.assertFalse(device.noise_reduction)
 
     def test_a_denied_node_fails_without_claiming_a_state_change(self):
         device = StrixDevice()
         with (
-            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("strix_battery.device.glob.glob", return_value=["/dev/hidraw0"]),
             patch(
-                "device.os.open", side_effect=PermissionError(13, "Permission denied")
+                "strix_battery.device.os.open",
+                side_effect=PermissionError(13, "Permission denied"),
             ),
         ):
             self.assertFalse(device.set_noise_reduction(True))
@@ -1518,10 +1641,13 @@ class NoiseReductionBehaviourTests(unittest.TestCase):
     def test_an_ioctl_failure_fails_without_claiming_a_state_change(self):
         device = StrixDevice()
         with (
-            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
-            patch("device.os.open", return_value=7),
-            patch("device.fcntl.ioctl", side_effect=OSError(19, "No such device")),
-            patch("device.os.close"),
+            patch("strix_battery.device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("strix_battery.device.os.open", return_value=7),
+            patch(
+                "strix_battery.device.fcntl.ioctl",
+                side_effect=OSError(19, "No such device"),
+            ),
+            patch("strix_battery.device.os.close"),
         ):
             self.assertFalse(device.set_noise_reduction(True))
         self.assertFalse(device.noise_reduction)
@@ -1543,7 +1669,9 @@ class NoiseReductionStateFileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             tmp = pathlib.Path(d)
             path = self.write_state(tmp, json.dumps({"noise_reduction": True}))
-            with patch("device.noise_reduction_state_path", return_value=path):
+            with patch(
+                "strix_battery.device.noise_reduction_state_path", return_value=path
+            ):
                 device = StrixDevice()
                 device.load_noise_reduction_state()
             self.assertTrue(device.noise_reduction)
@@ -1552,7 +1680,8 @@ class NoiseReductionStateFileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             tmp = pathlib.Path(d)
             with patch(
-                "device.noise_reduction_state_path", return_value=tmp / "absent.json"
+                "strix_battery.device.noise_reduction_state_path",
+                return_value=tmp / "absent.json",
             ):
                 device = StrixDevice()
                 device.load_noise_reduction_state()
@@ -1562,7 +1691,9 @@ class NoiseReductionStateFileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             tmp = pathlib.Path(d)
             path = self.write_state(tmp, "{not json at all")
-            with patch("device.noise_reduction_state_path", return_value=path):
+            with patch(
+                "strix_battery.device.noise_reduction_state_path", return_value=path
+            ):
                 device = StrixDevice()
                 device.load_noise_reduction_state()
             self.assertFalse(device.noise_reduction)
@@ -1571,7 +1702,9 @@ class NoiseReductionStateFileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             tmp = pathlib.Path(d)
             path = self.write_state(tmp, json.dumps({"noise_reduction": "yes"}))
-            with patch("device.noise_reduction_state_path", return_value=path):
+            with patch(
+                "strix_battery.device.noise_reduction_state_path", return_value=path
+            ):
                 device = StrixDevice()
                 device.load_noise_reduction_state()
             self.assertFalse(device.noise_reduction)
@@ -1582,13 +1715,15 @@ class NoiseReductionStateFileTests(unittest.TestCase):
             path = tmp / "noise_reduction.json"
             device = StrixDevice()
             with (
-                patch("device.glob.glob", return_value=["/dev/hidraw0"]),
-                patch("device.os.open", return_value=7),
-                patch("device.fcntl.ioctl", side_effect=asus_ioctl()),
-                patch("device.time.sleep"),
-                patch("device.os.close"),
+                patch("strix_battery.device.glob.glob", return_value=["/dev/hidraw0"]),
+                patch("strix_battery.device.os.open", return_value=7),
+                patch("strix_battery.device.fcntl.ioctl", side_effect=asus_ioctl()),
+                patch("strix_battery.device.time.sleep"),
+                patch("strix_battery.device.os.close"),
                 patch.object(device, "notify"),
-                patch("device.noise_reduction_state_path", return_value=path),
+                patch(
+                    "strix_battery.device.noise_reduction_state_path", return_value=path
+                ),
             ):
                 device.set_noise_reduction(True)
             self.assertEqual(json.loads(path.read_text()), {"noise_reduction": True})
@@ -1598,7 +1733,7 @@ class NoiseReductionStateFileTests(unittest.TestCase):
             tmp = pathlib.Path(d)
             path = tmp / "noise_reduction.json"
             device = StrixDevice()
-            with patch("device.glob.glob", return_value=[]):
+            with patch("strix_battery.device.glob.glob", return_value=[]):
                 device.set_noise_reduction(True)
             self.assertFalse(path.exists())
 
@@ -1621,7 +1756,7 @@ class NoiseReductionCliTests(unittest.TestCase):
     def test_on_prints_a_confirmation_and_exits_zero(self):
         device = StrixDevice()
         with (
-            patch.object(main, "StrixDevice", return_value=device),
+            patch.object(strix_battery, "StrixDevice", return_value=device),
             patch.object(device, "set_noise_reduction", return_value=True) as setter,
         ):
             code, out = self.run_main(["--noise-reduction", "on"])
@@ -1632,7 +1767,7 @@ class NoiseReductionCliTests(unittest.TestCase):
     def test_off_turns_it_off(self):
         device = StrixDevice()
         with (
-            patch.object(main, "StrixDevice", return_value=device),
+            patch.object(strix_battery, "StrixDevice", return_value=device),
             patch.object(device, "set_noise_reduction", return_value=True) as setter,
         ):
             self.run_main(["--noise-reduction", "off"])
@@ -1641,7 +1776,7 @@ class NoiseReductionCliTests(unittest.TestCase):
     def test_a_failed_send_reports_the_receiver_and_exits_one(self):
         device = StrixDevice()
         with (
-            patch.object(main, "StrixDevice", return_value=device),
+            patch.object(strix_battery, "StrixDevice", return_value=device),
             patch.object(device, "set_noise_reduction", return_value=False),
         ):
             code, out = self.run_main(["--noise-reduction", "on"])
@@ -1652,7 +1787,7 @@ class NoiseReductionCliTests(unittest.TestCase):
         device = StrixDevice()
         with (
             patch.object(sys, "argv", ["strix-battery", "--noise-reduction", "maybe"]),
-            patch.object(main, "StrixDevice", return_value=device),
+            patch.object(strix_battery, "StrixDevice", return_value=device),
             patch.object(device, "set_noise_reduction") as setter,
             self.assertRaises(SystemExit) as ctx,
         ):
@@ -1671,7 +1806,7 @@ class QtNoiseReductionMenuTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         patcher = patch(
-            "device.noise_reduction_state_path",
+            "strix_battery.device.noise_reduction_state_path",
             return_value=pathlib.Path(tmp.name) / "noise-reduction.json",
         )
         patcher.start()

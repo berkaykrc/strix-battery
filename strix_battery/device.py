@@ -8,7 +8,7 @@ import struct
 import subprocess
 import time
 
-from battery import mv_to_percent
+from .battery import mv_to_percent
 
 # Linux hidraw ioctl codes (64-byte payload)
 HIDIOCGRAWINFO = 0x80084803

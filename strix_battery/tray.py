@@ -1,8 +1,8 @@
 import signal
 import sys
 
-from device import StrixDevice, offline_message
-from icon import pil_to_qpixmap, render_tray_icon
+from .device import StrixDevice, offline_message
+from .icon import pil_to_qpixmap, render_tray_icon
 
 # Tray glyphs as ASCII escapes so the source stays copy-pasteable and greppable.
 HEADSET_ICON = "\U0001f3a7"

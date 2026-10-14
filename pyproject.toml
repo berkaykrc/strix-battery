@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [project.scripts]
-strix-battery = "main:main"
+strix-battery = "strix_battery.cli:main"
 
 [dependency-groups]
 dev = [
@@ -23,10 +23,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-# main is the console-script entry point; the split moved its code into four
-# sibling modules, so a wheel that ships only `main` installs something that
-# cannot import its own batteries.
-py-modules = ["battery", "device", "icon", "main", "tray"]
+# The package keeps every module off the top level of site-packages; a generic
+# `main` there collides with any other tool that ships one.
+packages = ["strix_battery"]
 
 [tool.ruff]
 target-version = "py312"
