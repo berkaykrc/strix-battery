@@ -102,6 +102,32 @@ def offline_message(last_error: str | None) -> str:
     return message
 
 
+def decode_status(buf, path):
+    """Turn a raw 64-byte status reply into a status dict, or None.
+
+    Pure on purpose: no device state, no IO. That is what lets every field be
+    asserted in a test without a receiver plugged in. The display hold and the
+    low-battery notice stay in `query()`, because those are device state.
+    """
+    # A reply has to be long enough to hold the last field read below. Any
+    # caller can hand this public function a shorter buffer, and a truncated
+    # read is an absent reply, not a crash.
+    if len(buf) <= OFFSET_SLEEP_MSB:
+        return None
+
+    if buf[1] != REPLY_MARKER:
+        return None
+
+    voltage_mv = (buf[OFFSET_VOLUME_MSB] << 8) | buf[OFFSET_VOLUME_LSB]
+    return {
+        "percentage": mv_to_percent(voltage_mv),
+        "voltage": voltage_mv,
+        "charging": buf[OFFSET_CHARGING] == CHARGING_FLAG,
+        "sleep_min": ((buf[OFFSET_SLEEP_MSB] << 8) | buf[OFFSET_SLEEP_LSB]) // 60,
+        "path": path,
+    }
+
+
 class StrixDevice:
     """Manage USB HID communication with the ROG Strix Go 2.4."""
 
@@ -200,27 +226,17 @@ class StrixDevice:
             buf = bytearray([0xFF] + [0x00] * 63)
             fcntl.ioctl(fd, HIDIOCGFEATURE_64, buf)
 
-            # A powered-off or disconnected headset returns zeroed bytes.
-            if buf[1] != REPLY_MARKER:
+            status = decode_status(buf, path)
+            if status is None:
                 self._go_offline()
                 return None
 
-            voltage_mv = (buf[OFFSET_VOLUME_MSB] << 8) | buf[OFFSET_VOLUME_LSB]
-            pct = self.stabilize_percentage(mv_to_percent(voltage_mv))
-            charging = buf[OFFSET_CHARGING] == CHARGING_FLAG
-            sleep_sec = (buf[OFFSET_SLEEP_MSB] << 8) | buf[OFFSET_SLEEP_LSB]
+            status["percentage"] = self.stabilize_percentage(status["percentage"])
 
-            status = {
-                "percentage": pct,
-                "voltage": voltage_mv,
-                "charging": charging,
-                "sleep_min": sleep_sec // 60,
-                "path": path,
-            }
             self.last_status = status
             self.last_error = None
 
-            self._update_low_battery_notice(pct, charging)
+            self._update_low_battery_notice(status["percentage"], status["charging"])
 
             return status
         except OSError:

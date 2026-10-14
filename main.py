@@ -33,6 +33,7 @@ from device import (  # noqa: F401  - re-exported; `main` is the documented entr
     REPLY_MARKER,
     STRIX_PIDS,
     StrixDevice,
+    decode_status,
     noise_reduction_state_path,
     offline_message,
     validate_sleep_minutes,

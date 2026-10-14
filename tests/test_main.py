@@ -1023,6 +1023,69 @@ class QueryPacketTests(unittest.TestCase):
         self.assertEqual(main.OFFSET_SLEEP_MSB, 22)
 
 
+def make_reply(voltage=3904, charging=True, sleep_sec=0, marker=0x1B):
+    """Build a 64-byte status reply the way the receiver would send it."""
+    buf = bytearray(64)
+    buf[1] = marker
+    buf[main.OFFSET_CHARGING] = 0x0A if charging else 0x03
+    buf[main.OFFSET_VOLUME_LSB] = voltage & 0xFF
+    buf[main.OFFSET_VOLUME_MSB] = (voltage >> 8) & 0xFF
+    buf[main.OFFSET_SLEEP_LSB] = sleep_sec & 0xFF
+    buf[main.OFFSET_SLEEP_MSB] = (sleep_sec >> 8) & 0xFF
+    return buf
+
+
+class DecodeStatusTests(unittest.TestCase):
+    """The decode is pure, so every field can be asserted without hardware."""
+
+    def test_decodes_a_little_endian_voltage(self):
+        status = main.decode_status(make_reply(voltage=3904), "/dev/hidraw3")
+        self.assertEqual(status["voltage"], 3904)
+
+    def test_decodes_a_voltage_whose_high_byte_is_not_zero(self):
+        # 0x1000 = 4096mV. A swapped LSB/MSB would read 16, not 4096.
+        status = main.decode_status(make_reply(voltage=4096), "/dev/hidraw3")
+        self.assertEqual(status["voltage"], 4096)
+
+    def test_decodes_the_charging_flag(self):
+        self.assertIs(
+            main.decode_status(make_reply(charging=True), "/d")["charging"], True
+        )
+        self.assertIs(
+            main.decode_status(make_reply(charging=False), "/d")["charging"], False
+        )
+
+    def test_decodes_sleep_seconds_as_whole_minutes(self):
+        status = main.decode_status(make_reply(sleep_sec=1800), "/dev/hidraw3")
+        self.assertEqual(status["sleep_min"], 30)
+
+    def test_carries_the_device_path_through(self):
+        status = main.decode_status(make_reply(), "/dev/hidraw7")
+        self.assertEqual(status["path"], "/dev/hidraw7")
+
+    def test_a_missing_marker_means_offline(self):
+        self.assertIsNone(main.decode_status(make_reply(marker=0x00), "/dev/hidraw3"))
+
+    def test_clamps_a_garbage_voltage_to_a_valid_percentage(self):
+        # An all-ones voltage field must not produce a nonsense percentage.
+        status = main.decode_status(make_reply(voltage=0xFFFF), "/dev/hidraw3")
+        self.assertEqual(status["percentage"], 100)
+        self.assertEqual(status["percentage"], mv_to_percent(0xFFFF))
+
+    def test_a_maximum_sleep_field_does_not_crash(self):
+        status = main.decode_status(make_reply(sleep_sec=0xFFFF), "/dev/hidraw3")
+        self.assertEqual(status["sleep_min"], 1092)
+
+    def test_a_truncated_reply_is_offline_not_a_crash(self):
+        # `decode_status` is public, so any caller can hand it a buffer shorter
+        # than the fields it reads. A short buffer is a truncated read, not a
+        # status: report offline rather than raising IndexError from nowhere.
+        self.assertIsNone(main.decode_status(make_reply()[:8], "/dev/hidraw3"))
+
+    def test_an_empty_reply_is_offline_not_a_crash(self):
+        self.assertIsNone(main.decode_status(bytearray(), "/dev/hidraw3"))
+
+
 class SleepDurationTests(unittest.TestCase):
     def test_accepts_values_that_fit_the_hid_field(self):
         self.assertEqual(validate_sleep_minutes(0), 0)
