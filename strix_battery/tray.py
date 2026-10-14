@@ -22,14 +22,10 @@ PYQT6_MISSING_HINT = (
 
 PYQT6_UNUSABLE_HINT = (
     "\nError: 'PyQt6' is installed but could not be used for tray mode.\n"
-    "This usually means a broken Qt install or a missing platform plugin;\n"
-    "reinstalling PyQt6 alone may not fix it. The printed cause below names\n"
-    "the actual failing module if it is not Qt.\n"
+    "That means the distribution is present, but its import did not succeed.\n"
+    "The release below names the module that actually failed to import,\n"
+    "which may be PyQt6 itself or a dependency it pulls in.\n"
     "Cause: {error}\n"
-    "To reinstall PyQt6 and its dependencies anyway, run:\n"
-    "  uv add PyQt6 pillow\n"
-    "or, outside a uv project,\n"
-    "  pip install --upgrade --force-reinstall PyQt6 pillow\n"
 )
 
 
