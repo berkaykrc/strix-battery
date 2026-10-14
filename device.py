@@ -39,9 +39,24 @@ BATTERY_DISPLAY_DEADBAND_PERCENT = 2
 LOW_BATTERY_NOTIFY_PERCENT = 15
 LOW_BATTERY_REARM_PERCENT = 20
 
-QUERY_PACKET = bytearray(
+# 64-byte status query packet. `bytes`, not `bytearray`: this is a module-level
+# constant handed straight to ioctl on every poll, so a stray single-byte write
+# would corrupt every later query for the life of the process.
+QUERY_PACKET = bytes(
     [0xFF, 0x08, 0x00, 0xFD, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x01] + [0x00] * 54
 )
+
+# Byte offsets inside the 64-byte status reply. Named so a firmware revision
+# that shifts one field shows up as a diff a human reads, instead of a user
+# staring at a permanent "Offline" with no hint why. Voltage and sleep time
+# are little-endian 16-bit values split across LSB and MSB.
+REPLY_MARKER = 0x1B
+OFFSET_CHARGING = 9
+CHARGING_FLAG = 0x0A
+OFFSET_VOLUME_LSB = 11
+OFFSET_VOLUME_MSB = 12
+OFFSET_SLEEP_LSB = 21
+OFFSET_SLEEP_MSB = 22
 
 # Mic noise reduction, from the packet G-Helper 0.286 sends for this headset:
 # FF 08 00 FF 04 12 F1 03 52 <0C off | 0D on>. Byte 9 is the only field that
@@ -186,14 +201,14 @@ class StrixDevice:
             fcntl.ioctl(fd, HIDIOCGFEATURE_64, buf)
 
             # A powered-off or disconnected headset returns zeroed bytes.
-            if buf[1] != 0x1B:
+            if buf[1] != REPLY_MARKER:
                 self._go_offline()
                 return None
 
-            voltage_mv = (buf[12] << 8) | buf[11]
+            voltage_mv = (buf[OFFSET_VOLUME_MSB] << 8) | buf[OFFSET_VOLUME_LSB]
             pct = self.stabilize_percentage(mv_to_percent(voltage_mv))
-            charging = buf[9] == 0x0A
-            sleep_sec = (buf[22] << 8) | buf[21]
+            charging = buf[OFFSET_CHARGING] == CHARGING_FLAG
+            sleep_sec = (buf[OFFSET_SLEEP_MSB] << 8) | buf[OFFSET_SLEEP_LSB]
 
             status = {
                 "percentage": pct,

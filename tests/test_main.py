@@ -993,6 +993,36 @@ class ExitCodeContractTests(unittest.TestCase):
         self.assertEqual(len(out.strip().splitlines()), 1)
 
 
+class QueryPacketTests(unittest.TestCase):
+    """The query packet is sent on every poll, forever, so it must not drift."""
+
+    def test_the_query_packet_is_immutable(self):
+        self.assertIsInstance(
+            main.QUERY_PACKET,
+            bytes,
+            "a mutable bytearray lets one bad write corrupt every later query",
+        )
+
+    def test_the_query_packet_is_the_expected_sixty_four_byte_report(self):
+        self.assertEqual(len(main.QUERY_PACKET), 64)
+        self.assertEqual(
+            main.QUERY_PACKET[:10],
+            bytes([0xFF, 0x08, 0x00, 0xFD, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x01]),
+        )
+
+    def test_the_named_offsets_match_the_hardcoded_response_layout(self):
+        # These are the offsets the decode expressions used before they were
+        # named. If a firmware revision moves a field, this test is where a
+        # human should be told, not a user staring at "Offline".
+        self.assertEqual(main.REPLY_MARKER, 0x1B)
+        self.assertEqual(main.OFFSET_CHARGING, 9)
+        self.assertEqual(main.CHARGING_FLAG, 0x0A)
+        self.assertEqual(main.OFFSET_VOLUME_LSB, 11)
+        self.assertEqual(main.OFFSET_VOLUME_MSB, 12)
+        self.assertEqual(main.OFFSET_SLEEP_LSB, 21)
+        self.assertEqual(main.OFFSET_SLEEP_MSB, 22)
+
+
 class SleepDurationTests(unittest.TestCase):
     def test_accepts_values_that_fit_the_hid_field(self):
         self.assertEqual(validate_sleep_minutes(0), 0)
