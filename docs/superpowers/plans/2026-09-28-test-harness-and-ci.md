@@ -19,7 +19,7 @@
 - Tests live in `tests/test_main.py` only, using `unittest`. Do not migrate to pytest.
 - The gating command, and the only one that gates this plan:
   `uv run --no-sync python -m unittest discover -s tests -v`
-  All 53 existing tests must stay green in every task. Baseline verified at `abcb770`: `Ran 53 tests ... OK`.
+  All existing tests must stay green in every task. Baseline verified at `abcb770`: the suite is green there.
 - **No test may require hardware, network, a display, or GLib.** The environment running this plan has no `gi` module and no `DISPLAY`. Any new test that does is a bug in the test.
 - **The linter must be added in a state where the codebase already passes.** Do not add a rule and then suppress 30 violations. `pyproject.toml` already carries `[tool.ruff]` and `[tool.ty]` and the codebase satisfies both; this plan only turns them on in CI. If a rule genuinely must be relaxed to ship this, relax it in configuration with a comment, never with a per-line `noqa`.
 - No new runtime dependencies. `ruff` is a development-only tool; it belongs in a `[dependency-groups]` dev group, not in `[project.dependencies]`.
@@ -131,7 +131,7 @@ uv run --no-sync python -c "import main; print('import ok')"
 uv run ruff check .
 ```
 
-Expected: `Ran 58 tests ... OK`, then `import ok`, then ruff clean. If any fails,
+Expected: `OK`, then `import ok`, then ruff clean. If any fails,
 fix it here. A workflow that has never been run locally is a guess.
 
 - [x] **Step 3: Add the badge**

@@ -20,7 +20,7 @@
 - `main.py` remains importable as top-level module `main` (`pyproject.toml:25`).
 - The gating command, and the only one that gates this plan:
   `uv run --no-sync python -m unittest discover -s tests -v`
-  All 53 existing tests must stay green in every task. Baseline verified at `abcb770`: `Ran 53 tests ... OK`.
+  All existing tests must stay green in every task. Baseline verified at `abcb770`: the suite is green there.
 - **New tests must be hermetic.** Never depend on which `/dev/hidraw*` nodes the host has. Any test reaching device code must patch `os.open`, `fcntl.ioctl`, `glob.glob`, `time.sleep` and `os.close`. The host running this plan has 6 hidraw nodes; the plan's tests must pass unchanged on a host with 0 and on one with 20.
 - **The ioctl constants are correct. Do not change them.** `HIDIOCGRAWINFO=0x80084803` matches `_IOR('H', 0x03, struct hidraw_devinfo)` (8 bytes). `0xC0404806`/`0xC0404807` match `HIDIOCSFEATURE(64)`/`HIDIOCGFEATURE(64)` given `HIDRAW_BUFFER_SIZE 64` and `_IOC(_IOC_WRITE|_IOC_READ, 'H', ...)` in `/usr/include/linux/hidraw.h`. Task 1 names the *byte offsets inside the response packet*, which is a different thing entirely.
 - `find_node` already closes its fd on every branch, including the `struct.error` path. Do not add or remove closes there.
@@ -188,7 +188,7 @@ Note the `buf[1]` becomes `buf[REPLY_MARKER]`. **`REPLY_MARKER` is the marker's 
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
-Expected: `Ran 57 tests ... OK`. (53 existing plus 4 new.) All 53 existing tests must still pass — the offset renames are behaviour-preserving and the existing `asus_ioctl` fake in `LastErrorTests` writes to the same byte indices, so it keeps working unchanged.
+Expected: `OK`. (the existing suite plus the new tests.) All existing tests must still pass — the offset renames are behaviour-preserving and the existing `asus_ioctl` fake in `LastErrorTests` writes to the same byte indices, so it keeps working unchanged.
 
 - [ ] **Step 7: Commit**
 
@@ -334,7 +334,7 @@ The `time.sleep(0.04)` between the `HIDIOCSFEATURE_64` write and the `HIDIOCGFEA
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
-Expected: `Ran 65 tests ... OK`. (57 from Task 1, plus 8 in `DecodeStatusTests`.)
+Expected: `OK`. (the suite so far, plus this task's new tests.)
 
 - [ ] **Step 6: Commit**
 
@@ -485,7 +485,7 @@ The `try/except ValueError` is retained deliberately: `main()` already rejects o
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
-Expected: `Ran 72 tests ... OK`. (65 from Task 2, plus 7 in `SleepPacketTests`.)
+Expected: `OK`. (the suite so far, plus this task's new tests.)
 
 - [ ] **Step 6: Commit**
 
@@ -500,7 +500,7 @@ git commit -m "refactor: pin the sleep-timer packet encoding against silent wrap
 
 Measured on the host running this plan, `abcb770`, Python 3.12.12, Pillow 12.3, 6 hidraw nodes present:
 
-- Baseline before this plan: `Ran 53 tests ... OK`.
+- Baseline before this plan: the suite was green.
 - `QUERY_PACKET` is `bytearray`, length 64, first 10 bytes `FF 08 00 FD 04 12 F1 03 52 01` — the values Task 1's tests pin.
 - The decode expressions are at `main.py:195` (`buf[1] != 0x1B`), `:199` (voltage), `:201` (charging), `:202` (sleep seconds) — the offsets Task 1 names.
 - `set_sleep` builds its 12-byte header plus 52 zeros inline at `main.py:239-242` — the bytes Task 3 freezes.

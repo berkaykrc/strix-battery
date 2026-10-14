@@ -83,7 +83,7 @@ The eight tests in `tests/test_main.py` already exist and fail with `AttributeEr
 
 Run: `uv run python -m unittest tests.test_main.NoiseReductionPacketTests tests.test_main.NoiseReductionBehaviourTests 2>&1 | tail -5`
 
-Expected: `Ran 8 tests` and `FAILED (errors=8)`, every error reading `AttributeError: 'StrixDevice' object has no attribute 'set_noise_reduction'`.
+Expected: `FAILED`, every error reading `AttributeError: 'StrixDevice' object has no attribute 'set_noise_reduction'`.
 
 - [x] **Step 2: Add the sub-command mapping next to `QUERY_PACKET`**
 
@@ -138,13 +138,13 @@ Note the asymmetry with `set_sleep`: `set_sleep` calls `self.query()` afterwards
 
 Run: `uv run python -m unittest tests.test_main.NoiseReductionPacketTests -v 2>&1 | tail -12`
 
-Expected: 4 tests, all `ok`.
+Expected: all `ok`.
 
 - [x] **Step 6: Run the behaviour tests**
 
 Run: `uv run python -m unittest tests.test_main.NoiseReductionBehaviourTests -v 2>&1 | tail -12`
 
-Expected: 4 tests, all `ok`. `test_only_byte_nine_differs_between_the_two_states` is the one that fails if any other byte moved.
+Expected: all `ok`. `test_only_byte_nine_differs_between_the_two_states` is the one that fails if any other byte moved.
 
 - [x] **Step 7: Run the whole suite**
 
@@ -316,7 +316,7 @@ In `__init__`, add `self.load_noise_reduction_state()` after `self.noise_reducti
 
 Run: `uv run python -m unittest tests.test_main.NoiseReductionStateFileTests -v 2>&1 | tail -12`
 
-Expected: 6 tests, all `ok`.
+Expected: all `ok`.
 
 - [x] **Step 7: Run the whole suite**
 
@@ -443,7 +443,7 @@ if args.noise_reduction is not None:
 
 Run: `uv run python -m unittest tests.test_main.NoiseReductionCliTests -v 2>&1 | tail -12`
 
-Expected: 4 tests, all `ok`.
+Expected: all `ok`.
 
 - [x] **Step 6: Run the whole suite**
 
@@ -685,7 +685,7 @@ Each lambda passes the boolean positionally, matching `set_noise_reduction(enabl
 
 Run: `uv run python -m unittest tests.test_main.QtNoiseReductionMenuTests tests.test_main.PystrayNoiseReductionMenuTests -v 2>&1 | tail -12`
 
-Expected: 5 tests, all `ok`.
+Expected: all `ok`.
 
 - [x] **Step 9: Run the whole suite**
 

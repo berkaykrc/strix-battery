@@ -19,7 +19,7 @@
 - Tests live in `tests/test_main.py` only, using `unittest`. Do not migrate to pytest.
 - The gating command, and the only one that gates this plan:
   `uv run --no-sync python -m unittest discover -s tests -v`
-  All 53 existing tests must stay green in every task. Baseline verified at `abcb770`: `Ran 53 tests ... OK`.
+  All existing tests must stay green in every task. Baseline verified at `abcb770`: the suite is green there.
 - **The default curve must be behaviour-preserving.** Task 1's tests assert that the shipped default produces byte-identical output to `abcb770` for every voltage in range. A change in any reported percentage is a Task 2 concern and requires hardware.
 - `mv_to_percent(mv: int) -> int` keeps its signature and its 0-100 clamp. Callers (`query`, the tray backends, `main`) are unchanged.
 - No new runtime dependencies.
@@ -256,7 +256,7 @@ surprising.
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
-Expected: `Ran 64 tests ... OK`. (53 existing plus 11 new.)
+Expected: `OK`. (the existing suite plus the new tests.)
 
 The existing `MvToPercentTests` class must pass **unmodified** — it is the
 behaviour-preservation proof, written before this change.
@@ -484,7 +484,7 @@ Measured on the host running this plan, `abcb770`, Python 3.12.12:
   `mv_to_percent(3800) == 58`, `mv_to_percent(3900) == 70`,
   `mv_to_percent(4000) == 82`. Whether the true values are 70/80/90 is
   **unverified** — see the note below.
-- The existing `MvToPercentTests` (3 tests) already pin the endpoints, the
+- The existing `MvToPercentTests` already pin the endpoints, the
   monotonicity, and the garbage-input bounds of the linear map.
 - `main.py:199-202` is the only caller of `mv_to_percent` in production code,
   via `query()`; the two tray backends only read the resulting dict.

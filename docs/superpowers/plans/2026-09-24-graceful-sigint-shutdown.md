@@ -310,7 +310,7 @@ Run:
 uv run python -m unittest discover -s tests -p 'test_main.py' -k QtSignalShutdownTests -v
 ```
 
-Expected: 6 tests run, all pass.
+Expected: all pass.
 
 - [x] **Step 5: Run the complete unit suite**
 
@@ -320,7 +320,7 @@ Run:
 uv run python -m unittest discover -s tests -v
 ```
 
-Expected: 20 tests run, all pass.
+Expected: all pass.
 
 - [x] **Step 6: Smoke-test real terminal Ctrl+C handling**
 

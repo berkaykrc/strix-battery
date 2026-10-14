@@ -19,7 +19,7 @@
 - Tests live in `tests/test_main.py` only, using `unittest`. Do not migrate to pytest. The test file keeps its name in this plan — renaming it to `tests/test_strix_battery.py` is a separate, optional cleanup.
 - The gating command, and the only one that gates this plan:
   `uv run --no-sync python -m unittest discover -s tests -v`
-  All 53 existing tests must stay green in every task. Baseline verified at `abcb770`: `Ran 53 tests ... OK`.
+  All existing tests must stay green in every task. Baseline verified at `abcb770`: the suite is green there.
 - **`main` must remain importable as a module name.** The README documents `uv run python main.py --json`, and the test suite does `import main` in a dozen places. The shim is what keeps both working, and a test must pin it.
 - The public API is the set of names the test file imports. The new `strix_battery/cli.py` must re-export every one of them or `tests/test_main.py` breaks.
 - No new runtime dependencies. `pyproject.toml` `dependencies` and `optional-dependencies` are unchanged apart from `[tool.setuptools]` and `[project.scripts]`.
@@ -270,9 +270,9 @@ silently preferring one.
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
-Expected: `Ran 58 tests ... OK`. (53 existing plus 5 new.)
+Expected: `OK`. (the existing suite plus the new tests.)
 
-Every one of the 53 existing tests must still pass **unmodified**, except for
+Every one of the existing tests must still pass **unmodified**, except for
 the `import strix_battery` line and the new class. That is the real assertion
 of this task: the shim resolves `patch("main.glob.glob")`, `patch("main.fcntl.ioctl")`,
 `patch("main.subprocess.run")` and `patch("main._load_glib")` to the same module
@@ -504,7 +504,7 @@ neither backend can start.
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
-Expected: `Ran 61 tests ... OK`. (58 from Task 1, plus 3 new.)
+Expected: `OK`. (the suite so far, plus this task's new tests.)
 
 - [ ] **Step 5: Verify both messages by hand**
 

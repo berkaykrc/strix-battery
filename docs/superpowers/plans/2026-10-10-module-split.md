@@ -21,7 +21,7 @@
 - **All new source and test code is ASCII-only.**
 - **The gating command, and the only one that gates this plan:**
   `uv run python -m unittest discover -s tests`
-  All 76 existing tests must stay green in every task. Baseline verified at `fa55f17`: `Ran 76 tests ... OK`.
+  All existing tests must stay green in every task. Baseline verified at `fa55f17`: the suite is green there.
 - The repo's other three gates (`ruff check`, `ruff format --check`, `ty check`) must also stay green; they are cheap and a move that trips a linter is not a clean move.
 - **No new runtime dependencies.**
 
@@ -84,7 +84,7 @@ Placed with the other imports at the top. `main.py` keeps re-exporting `mv_to_pe
 - [x] **Step 5: Run the full suite to verify it passes**
 
 Run: `uv run python -m unittest discover -s tests`
-Expected: `Ran 77 tests ... OK` (76 existing plus the new one). Every one of the 76 must pass unmodified — that is the proof the move was behaviour-preserving.
+Expected: `OK` (the existing suite plus the new test). Every existing test must pass unmodified — that is the proof the move was behaviour-preserving.
 
 - [x] **Step 6: Run the other three gates**
 
@@ -194,7 +194,7 @@ Apply the table above to `tests/test_main.py`. It is a literal string substituti
 - [x] **Step 6: Run the full suite to verify it passes**
 
 Run: `uv run python -m unittest discover -s tests`
-Expected: `Ran 79 tests ... OK` (77 from Task 1, plus 2 new).
+Expected: `OK` (77 from Task 1, plus 2 new).
 
 - [x] **Step 7: Prove the state-file patch is still effective**
 
@@ -302,7 +302,7 @@ In `tests/test_main.py`, replace both `patch("main.signal", ...)` with `patch("t
 - [x] **Step 6: Run the full suite to verify it passes**
 
 Run: `uv run python -m unittest discover -s tests`
-Expected: `Ran 81 tests ... OK` (79 from Task 2, plus 2 new).
+Expected: `OK` (79 from Task 2, plus 2 new).
 
 - [x] **Step 7: Prove the signal patch is still effective**
 
@@ -379,7 +379,7 @@ Delete any re-export that no module, test, or the README references. Keep the ar
 - [x] **Step 4: Run the full suite to verify it passes**
 
 Run: `uv run python -m unittest discover -s tests`
-Expected: `Ran 82 tests ... OK` (81 from Task 3, plus 1 new).
+Expected: `OK` (81 from Task 3, plus 1 new).
 
 - [x] **Step 5: Verify both documented invocations by hand**
 

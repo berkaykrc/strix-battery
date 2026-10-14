@@ -20,7 +20,7 @@
 - `main.py` is imported as the top-level module `main` (`pyproject.toml:25`, `py-modules = ["main"]`). Do not rename it in this plan.
 - The test command, and the only command that gates this plan:
   `uv run --no-sync python -m unittest discover -s tests -v`
-  All 20 existing tests must stay green in every task. Baseline verified at `709e78b`: `Ran 20 tests ... OK`.
+  All existing tests must stay green in every task. Baseline verified at `709e78b`: the suite is green there.
 - **New tests must be hermetic.** Never assert on, or depend on, which `/dev/hidraw*` nodes the host happens to have. `os.open`, `fcntl.ioctl`, `glob.glob`, `time.sleep` and `os.close` must all be patched in any test that reaches real device code.
 - No new runtime dependencies. `pyproject.toml` `dependencies` and `optional-dependencies` must be byte-identical at the end of this plan.
 - No network access, no hardware access. Every test must pass headless.
@@ -160,7 +160,7 @@ Replace the whole `notify` method with:
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
-Expected: `Ran 24 tests` — `OK`. (20 pre-existing plus 4 new.) All 20 pre-existing tests must still pass.
+Expected: `OK`. (the existing suite plus the new tests.) All pre-existing tests must still pass.
 
 - [x] **Step 6: Commit**
 
@@ -488,7 +488,7 @@ with:
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
-Expected: `Ran 35 tests` — `OK`. (24 from Task 1, plus 3 in `MvToPercentTests` and 8 in `PercentageStabilityTests`.)
+Expected: `OK`. (the suite so far, plus this task's new tests.)
 
 - [x] **Step 7: Commit**
 
@@ -842,7 +842,7 @@ Then replace the offline branch of `StrixTrayPystray.update_tray` (`main.py:419-
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
-Expected: `Ran 43 tests` — `OK`. (35 from Task 2, plus 8 in `LastErrorTests`.)
+Expected: `OK`. (the suite so far, plus this task's new tests.)
 
 - [x] **Step 10: Commit**
 
@@ -999,7 +999,7 @@ In `main.py`, insert this block immediately after the line `QApplication.setQuit
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
-Expected: `Ran 46 tests` — `OK`. (43 from Task 3, plus 3 in `QtTrayAvailabilityTests`.)
+Expected: `OK`. (the suite so far, plus this task's new tests.)
 
 - [x] **Step 5: Verify against real Qt, not just the fakes**
 
@@ -1032,7 +1032,7 @@ git commit -m "fix: exit with a clear message when the desktop has no system tra
 
 This plan was executed end to end against a throwaway copy of the tree before being written up, and these are the observed results rather than predictions:
 
-- `uv run --no-sync python -m unittest discover -s tests -v` → **`Ran 46 tests ... OK`**, with all 20 pre-existing tests still green.
+- `uv run --no-sync python -m unittest discover -s tests -v` → **`OK`**, with all pre-existing tests still green.
 - `QT_QPA_PLATFORM=offscreen ... python main.py --tray` → the three-line error message and `exit=1`, returning promptly instead of hanging.
 - The two intermediate test counts (24 after Task 1, 35 after Task 2, 43 after Task 3) were all confirmed by real runs.
 - Two defects were found and fixed by that dry run, and the versions in this plan are the corrected ones: the first `find_node` test depended on which `/dev/hidraw*` the host actually had, and the first stale-error test used a bare `MagicMock` for `ioctl`, which left the reply buffer zeroed so `query()` correctly reported offline and the assertion never cleared.

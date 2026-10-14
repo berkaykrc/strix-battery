@@ -21,7 +21,7 @@
 - `main.py` remains importable as top-level module `main`.
 - The gating command, and the only one that gates this plan:
   `uv run --no-sync python -m unittest discover -s tests -v`
-  All 53 existing tests must stay green in every task. Baseline verified at `abcb770`: `Ran 53 tests ... OK`.
+  All existing tests must stay green in every task. Baseline verified at `abcb770`: the suite is green there.
 - **New tests must be hermetic.** Never depend on which `/dev/hidraw*` nodes the host has. Patch `main.glob.glob` (or inject a fake device) in every test that reaches device code.
 - No new runtime dependencies.
 - The exit code for a successful run stays `0`. Only the offline case changes.
@@ -169,7 +169,7 @@ EXIT_USAGE = 2
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
-Expected: `Ran 58 tests ... OK`. (53 existing plus 5 new.)
+Expected: `OK`. (the existing suite plus the new tests.)
 
 - [x] **Step 6: Verify the real CLI, not just the fakes**
 
@@ -371,7 +371,7 @@ The `end=""` matters: `render_text_status` already ends its last line with `\n`,
 
 Run: `uv run --no-sync python -m unittest discover -s tests -v`
 
-Expected: `Ran 64 tests ... OK`. (58 from Task 1, plus 6 new.)
+Expected: `OK`. (the suite so far, plus this task's new tests.)
 
 - [x] **Step 6: Verify the real CLI, both modes, offline**
 

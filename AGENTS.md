@@ -14,7 +14,7 @@ Applies to every contributor here, human or agent: user instructions
 
 ```bash
 uv sync --group dev
-uv run python -m unittest discover -s tests   # 76 tests, must stay green
+uv run python -m unittest discover -s tests   # must stay green
 uv run --group dev ruff check .               # must pass, no warnings
 uv run --group dev ruff format --check .      # must pass, no diff
 uv run --group dev ty check                   # must pass, no errors
