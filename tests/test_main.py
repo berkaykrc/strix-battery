@@ -1125,6 +1125,58 @@ class SleepPacketTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             main.build_sleep_packet(MAX_SLEEP_MINUTES + 1)
 
+    def test_a_relaxed_cap_fails_loudly_instead_of_wrapping(self):
+        # The 16-bit field is the only reason the cap is 1092. If the cap is
+        # ever relaxed, the overflow must surface here as an error rather than
+        # wrap into a timer set to a wrong value with no symptom at all.
+        with (
+            patch("device.MAX_SLEEP_MINUTES", 2000),
+            self.assertRaises(RuntimeError),
+        ):
+            main.build_sleep_packet(1200)
+
+    def sent_sleep_packet(self, minutes):
+        """Run `set_sleep` against a recording ioctl and return every buffer
+        handed to HIDIOCSFEATURE_64, in order."""
+        sent = []
+
+        def _ioctl(fd, request, buf, *args, **kwargs):
+            if request == main.HIDIOCGRAWINFO:
+                buf[:8] = ASUS_DEVINFO
+            elif request == main.HIDIOCSFEATURE_64:
+                sent.append(bytes(buf))
+            elif request == main.HIDIOCGFEATURE_64:
+                buf[1] = 0x1B
+                buf[11] = 0x40
+                buf[12] = 0x0F
+
+        device = StrixDevice()
+        with (
+            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("device.os.open", return_value=7),
+            patch("device.fcntl.ioctl", side_effect=_ioctl),
+            patch("device.time.sleep"),
+            patch("device.os.close"),
+            patch.object(device, "notify"),
+        ):
+            self.assertTrue(device.set_sleep(minutes))
+        return sent
+
+    def test_set_sleep_writes_the_packet_the_encoder_builds(self):
+        # Pins the wiring, not just the encoder: a `set_sleep` that stopped
+        # calling `build_sleep_packet` would leave this suite green while the
+        # headset received garbage. The trailing query packet comes along for
+        # the same ride, which is what pins QUERY_PACKET on the wire too.
+        for minutes in (0, 5, 30, MAX_SLEEP_MINUTES):
+            with self.subTest(minutes=minutes):
+                self.assertEqual(
+                    self.sent_sleep_packet(minutes),
+                    [
+                        main.build_sleep_packet(minutes),
+                        main.QUERY_PACKET,
+                    ],
+                )
+
 
 class SleepDurationTests(unittest.TestCase):
     def test_accepts_values_that_fit_the_hid_field(self):

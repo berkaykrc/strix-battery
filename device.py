@@ -95,12 +95,16 @@ def build_sleep_packet(minutes: int) -> bytes:
     """Encode the sleep-timer command. Pure, so the encoding can be tested.
 
     The seconds field is 16 bits, which is why MAX_SLEEP_MINUTES is 1092.
-    The assert is a backstop: if the cap is ever relaxed, a wrap would set the
-    timer to a wrong value with no error rather than failing loudly.
+    The check is a backstop: if the cap is ever relaxed, an overflowing
+    duration would wrap into a timer set to a wrong value with no error, so
+    this must fail loudly. It is an explicit raise rather than an `assert`
+    because `python -O` deletes asserts, and it is not a ValueError because
+    `set_sleep` deliberately swallows those.
     """
     validate_sleep_minutes(minutes)
     seconds = minutes * 60
-    assert 0 <= seconds < (1 << 16), f"{seconds}s does not fit the 16-bit field"
+    if not 0 <= seconds < (1 << 16):
+        raise RuntimeError(f"{seconds}s does not fit the 16-bit field")
 
     packet = bytearray(64)
     packet[: len(SLEEP_PACKET_COMMAND)] = SLEEP_PACKET_COMMAND
