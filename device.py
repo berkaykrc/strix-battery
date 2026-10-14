@@ -58,6 +58,15 @@ OFFSET_VOLUME_MSB = 12
 OFFSET_SLEEP_LSB = 21
 OFFSET_SLEEP_MSB = 22
 
+# The sleep-timer command is a different packet from the status query, and its
+# own seconds field. Kept separate from the read-path offsets above so nobody
+# confuses the two.
+SLEEP_PACKET_COMMAND = bytes(
+    [0xFF, 0x0A, 0x00, 0xFF, 0x04, 0x12, 0xF1, 0x05, 0x52, 0x0B]
+)
+OFFSET_SLEEP_SECONDS_LSB = 10
+OFFSET_SLEEP_SECONDS_MSB = 11
+
 # Mic noise reduction, from the packet G-Helper 0.286 sends for this headset:
 # FF 08 00 FF 04 12 F1 03 52 <0C off | 0D on>. Byte 9 is the only field that
 # changes between the two states, so keep the mapping in one place rather than
@@ -80,6 +89,24 @@ def validate_sleep_minutes(minutes: int) -> int:
             f"Sleep duration must be between 0 and {MAX_SLEEP_MINUTES} minutes."
         )
     return minutes
+
+
+def build_sleep_packet(minutes: int) -> bytes:
+    """Encode the sleep-timer command. Pure, so the encoding can be tested.
+
+    The seconds field is 16 bits, which is why MAX_SLEEP_MINUTES is 1092.
+    The assert is a backstop: if the cap is ever relaxed, a wrap would set the
+    timer to a wrong value with no error rather than failing loudly.
+    """
+    validate_sleep_minutes(minutes)
+    seconds = minutes * 60
+    assert 0 <= seconds < (1 << 16), f"{seconds}s does not fit the 16-bit field"
+
+    packet = bytearray(64)
+    packet[: len(SLEEP_PACKET_COMMAND)] = SLEEP_PACKET_COMMAND
+    packet[OFFSET_SLEEP_SECONDS_LSB] = seconds & 0xFF
+    packet[OFFSET_SLEEP_SECONDS_MSB] = (seconds >> 8) & 0xFF
+    return bytes(packet)
 
 
 def offline_message(last_error: str | None) -> str:
@@ -248,7 +275,7 @@ class StrixDevice:
     def set_sleep(self, minutes: int):
         """Set the automatic sleep timer (0 = never turn off)."""
         try:
-            validate_sleep_minutes(minutes)
+            payload = build_sleep_packet(minutes)
         except ValueError:
             return False
 
@@ -257,28 +284,6 @@ class StrixDevice:
             return False
 
         try:
-            seconds = minutes * 60
-            sec_lsb = seconds & 0xFF
-            sec_msb = (seconds >> 8) & 0xFF
-
-            payload = bytearray(
-                [
-                    0xFF,
-                    0x0A,
-                    0x00,
-                    0xFF,
-                    0x04,
-                    0x12,
-                    0xF1,
-                    0x05,
-                    0x52,
-                    0x0B,
-                    sec_lsb,
-                    sec_msb,
-                ]
-                + [0x00] * 52
-            )
-
             fcntl.ioctl(fd, HIDIOCSFEATURE_64, payload)
             self.notify("ROG Strix Go", f"Sleep timer set to {minutes} minutes.")
             self.query()

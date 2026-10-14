@@ -1086,6 +1086,46 @@ class DecodeStatusTests(unittest.TestCase):
         self.assertIsNone(main.decode_status(bytearray(), "/dev/hidraw3"))
 
 
+class SleepPacketTests(unittest.TestCase):
+    """The 16-bit seconds field wraps silently, so the encoding must be pinned."""
+
+    def test_encodes_minutes_as_little_endian_seconds(self):
+        packet = main.build_sleep_packet(30)
+        lsb = packet[main.OFFSET_SLEEP_SECONDS_LSB]
+        msb = packet[main.OFFSET_SLEEP_SECONDS_MSB]
+        self.assertEqual((msb << 8) | lsb, 1800)
+
+    def test_the_maximum_duration_does_not_wrap(self):
+        packet = main.build_sleep_packet(MAX_SLEEP_MINUTES)
+        lsb = packet[main.OFFSET_SLEEP_SECONDS_LSB]
+        msb = packet[main.OFFSET_SLEEP_SECONDS_MSB]
+        encoded = (msb << 8) | lsb
+        self.assertEqual(encoded, 65520)
+        self.assertLess(encoded, 1 << 16, "the seconds field must not overflow")
+
+    def test_zero_never_turns_the_headset_off(self):
+        packet = main.build_sleep_packet(0)
+        lsb = packet[main.OFFSET_SLEEP_SECONDS_LSB]
+        msb = packet[main.OFFSET_SLEEP_SECONDS_MSB]
+        self.assertEqual(((msb << 8) | lsb), 0)
+
+    def test_the_packet_is_sixty_four_bytes(self):
+        self.assertEqual(len(main.build_sleep_packet(5)), 64)
+
+    def test_the_command_header_is_frozen(self):
+        self.assertEqual(
+            main.SLEEP_PACKET_COMMAND,
+            bytes([0xFF, 0x0A, 0x00, 0xFF, 0x04, 0x12, 0xF1, 0x05, 0x52, 0x0B]),
+        )
+
+    def test_the_packet_is_immutable(self):
+        self.assertIsInstance(main.build_sleep_packet(5), bytes)
+
+    def test_rejects_a_duration_that_would_overflow_the_field(self):
+        with self.assertRaises(ValueError):
+            main.build_sleep_packet(MAX_SLEEP_MINUTES + 1)
+
+
 class SleepDurationTests(unittest.TestCase):
     def test_accepts_values_that_fit_the_hid_field(self):
         self.assertEqual(validate_sleep_minutes(0), 0)
