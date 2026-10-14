@@ -1346,3 +1346,40 @@ class QtNoiseReductionMenuTests(unittest.TestCase):
             )
             toggle.triggered.emit(False)
         setter.assert_called_once_with(True)
+
+
+class PublicSurfaceTests(unittest.TestCase):
+    """`import main` is the documented entry point; its surface must not shrink."""
+
+    def test_every_documented_name_is_still_reachable_from_main(self):
+        for name in [
+            "ASUS_VID",
+            "ERROR_OFFLINE",
+            "ERROR_PERMISSION",
+            "HEADSET_ICON",
+            "HIDIOCGFEATURE_64",
+            "HIDIOCGRAWINFO",
+            "LOW_BATTERY_NOTIFY_PERCENT",
+            "LOW_BATTERY_REARM_PERCENT",
+            "MAX_SLEEP_MINUTES",
+            "NOISE_REDUCTION_ICON",
+            "NOISE_REDUCTION_SUB_COMMAND",
+            "NOTIFY_TIMEOUT_SECONDS",
+            "QUERY_PACKET",
+            "SLEEP_ICON",
+            "STRIX_PIDS",
+            "StrixDevice",
+            "load_discharge_curve",
+            "main",
+            "mv_to_percent",
+            "noise_reduction_state_path",
+            "offline_message",
+            "parse_discharge_curve",
+            "pil_to_qpixmap",
+            "render_tray_icon",
+            "run_pyqt_tray",
+            "start_tray",
+            "validate_sleep_minutes",
+        ]:
+            with self.subTest(name=name):
+                self.assertTrue(hasattr(main, name), f"main lost {name}")
