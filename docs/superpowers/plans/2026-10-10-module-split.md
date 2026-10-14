@@ -51,7 +51,7 @@ Six input classes this scope implies but that no test currently exercises.
 
 **Context you need:** the block is `main.py` lines 96-178 at `fa55f17` — `DISCHARGE_CURVE_ENV_VAR` through the end of `mv_to_percent`. `main.py` line 79-94 (`DEFAULT_DISCHARGE_CURVE` and its eleven-line warning comment) moves with it. `StrixDevice.query` at `main.py:307` calls `mv_to_percent(voltage_mv)` and `StrixDevice.stabilize_percentage` does not, so `main.py` needs one `from battery import mv_to_percent` to keep working. **No `patch("main.X")` site targets anything in this block**, which is why it goes first: it proves the move pattern at zero test risk.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add `import battery` after `import main` in `tests/test_main.py`, and add to `DischargeCurveTests`:
 
@@ -62,16 +62,16 @@ Add `import battery` after `import main` in `tests/test_main.py`, and add to `Di
         self.assertIs(main.parse_discharge_curve, battery.parse_discharge_curve)
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `uv run python -m unittest tests.test_main.DischargeCurveTests -v`
 Expected: `ModuleNotFoundError: No module named 'battery'`. Correct red state.
 
-- [ ] **Step 3: Create `battery.py`**
+- [x] **Step 3: Create `battery.py`**
 
 `git mv` is not available for an extracted block. Create `battery.py` and paste lines 79-101 and 104-178 of `main.py` verbatim, including the `DEFAULT_DISCHARGE_CURVE` warning comment and the `_WARNED_CURVES` comment. Add the imports the moved code needs: `import itertools`, `import os`, `import sys`.
 
-- [ ] **Step 4: Delete the block from `main.py` and import instead**
+- [x] **Step 4: Delete the block from `main.py` and import instead**
 
 In `main.py`, delete the moved lines and leave:
 
@@ -81,17 +81,17 @@ from battery import mv_to_percent
 
 Placed with the other imports at the top. `main.py` keeps re-exporting `mv_to_percent`, `parse_discharge_curve`, `load_discharge_curve`, `DEFAULT_DISCHARGE_CURVE` and `DISCHARGE_CURVE_ENV_VAR` — the tests import `mv_to_percent` from `main` directly, and the constraint above requires it.
 
-- [ ] **Step 5: Run the full suite to verify it passes**
+- [x] **Step 5: Run the full suite to verify it passes**
 
 Run: `uv run python -m unittest discover -s tests`
 Expected: `Ran 77 tests ... OK` (76 existing plus the new one). Every one of the 76 must pass unmodified — that is the proof the move was behaviour-preserving.
 
-- [ ] **Step 6: Run the other three gates**
+- [x] **Step 6: Run the other three gates**
 
 Run: `uv run --group dev ruff check . && uv run --group dev ruff format --check . && uv run --group dev ty check`
 Expected: all pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add battery.py main.py tests/test_main.py
@@ -127,7 +127,7 @@ git commit -m "refactor: move the discharge curve into battery.py"
 
 `os` is also used by `render_tray_icon` for `os.path.exists`, but no test patches `os.path`, so `os.open` and `os.close` belong to `device` alone.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add `import device` after `import main`, and add a new class before `class SleepDurationTests`:
 
@@ -156,16 +156,16 @@ class DeviceLayerTests(unittest.TestCase):
         self.assertEqual(len(reached), 1, "the state path was never called")
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `uv run python -m unittest tests.test_main.DeviceLayerTests -v`
 Expected: `ModuleNotFoundError: No module named 'device'`. Correct red state.
 
-- [ ] **Step 3: Create `device.py`**
+- [x] **Step 3: Create `device.py`**
 
 Create `device.py` and paste the blocks listed in Context, verbatim and in their current order. Add the imports they need: `import contextlib`, `import fcntl`, `import glob`, `import os`, `import pathlib`, `import struct`, `import subprocess`, `import sys`, `import time`, and `from battery import mv_to_percent`.
 
-- [ ] **Step 4: Delete the blocks from `main.py` and import instead**
+- [x] **Step 4: Delete the blocks from `main.py` and import instead**
 
 In `main.py`, delete the moved lines and leave this at the top with the other imports:
 
@@ -187,16 +187,16 @@ from device import (
 
 `main.py` keeps re-exporting every name above — the suite imports 8 of them directly from `main`.
 
-- [ ] **Step 5: Retarget the patch sites**
+- [x] **Step 5: Retarget the patch sites**
 
 Apply the table above to `tests/test_main.py`. It is a literal string substitution on `patch("main.` → `patch("device.` for those seven targets only. **Do not** touch `main.signal`; it belongs to Task 3.
 
-- [ ] **Step 6: Run the full suite to verify it passes**
+- [x] **Step 6: Run the full suite to verify it passes**
 
 Run: `uv run python -m unittest discover -s tests`
 Expected: `Ran 79 tests ... OK` (77 from Task 1, plus 2 new).
 
-- [ ] **Step 7: Prove the state-file patch is still effective**
+- [x] **Step 7: Prove the state-file patch is still effective**
 
 The suite going green is not proof for `device.noise_reduction_state_path`. Run the new test alone and confirm it fails when the target is wrong:
 
@@ -209,12 +209,12 @@ uv run python -m unittest tests.test_main.DeviceLayerTests -v   # must PASS
 
 Expected: the first run fails on `the state path was never called`, proving the assertion has teeth; the second passes. Revert the temporary sed before committing.
 
-- [ ] **Step 8: Run the other three gates**
+- [x] **Step 8: Run the other three gates**
 
 Run: `uv run --group dev ruff check . && uv run --group dev ruff format --check . && uv run --group dev ty check`
 Expected: all pass.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add device.py main.py tests/test_main.py
@@ -239,7 +239,7 @@ git commit -m "refactor: move the HID device layer into device.py"
 
 **Context you need:** `main.py` lines 30-33 (the three glyph constants), `_run_qt_app_with_sigint_shutdown` at 565-577, `run_pyqt_tray` at 580-709, `start_tray` at 712-722, and `render_tray_icon` plus `pil_to_qpixmap` at 453-562. `icon.py` needs `import os` only; `tray.py` needs `import signal`, `import sys`, and `from device import StrixDevice`. Both import PyQt6 and Pillow *inside* their functions, as today — that lazy import is what makes the tests able to fake PyQt6, and moving it to module scope would break `install_fake_pyqt6`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add `import icon` and `import tray` after `import main`, and add a class before `class SleepDurationTests`:
 
@@ -268,16 +268,16 @@ class TrayLayerTests(unittest.TestCase):
 
 `FakeSignalController`, `FakeQtApp` and `FakeQtTimer` already exist in the file, below the insertion point. Move the new class **after** `QtSignalShutdownTests` so those names are already defined at class-definition time — or place it after `class FakeQtTimer` and before `class QtSignalShutdownTests`. The second option is simpler: put it there.
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `uv run python -m unittest tests.test_main.TrayLayerTests -v`
 Expected: `ModuleNotFoundError: No module named 'tray'`. Correct red state.
 
-- [ ] **Step 3: Create `icon.py` and `tray.py`**
+- [x] **Step 3: Create `icon.py` and `tray.py`**
 
 Create both files, pasting the blocks listed in Context verbatim. `icon.py` gets `import os` plus the two function-local `from PIL import ...` imports. `tray.py` gets `import signal`, `import sys`, `from device import StrixDevice`, the three glyph constants, and the function-local `from PyQt6...` imports unchanged.
 
-- [ ] **Step 4: Delete the blocks from `main.py` and import instead**
+- [x] **Step 4: Delete the blocks from `main.py` and import instead**
 
 In `main.py`, delete the moved lines and leave at the top:
 
@@ -295,16 +295,16 @@ from tray import (
 
 `main.py` keeps re-exporting all of them.
 
-- [ ] **Step 5: Retarget the signal patch**
+- [x] **Step 5: Retarget the signal patch**
 
 In `tests/test_main.py`, replace both `patch("main.signal", ...)` with `patch("tray.signal", ...)`. Two sites, in `QtSignalShutdownTests`.
 
-- [ ] **Step 6: Run the full suite to verify it passes**
+- [x] **Step 6: Run the full suite to verify it passes**
 
 Run: `uv run python -m unittest discover -s tests`
 Expected: `Ran 81 tests ... OK` (79 from Task 2, plus 2 new).
 
-- [ ] **Step 7: Prove the signal patch is still effective**
+- [x] **Step 7: Prove the signal patch is still effective**
 
 `QtSignalShutdownTests` already asserts on `controller.registrations`, so a dead patch fails loudly — confirm it by breaking the target on purpose:
 
@@ -317,12 +317,12 @@ uv run python -m unittest tests.test_main.QtSignalShutdownTests -v   # must PASS
 
 Expected: the first run fails on the registrations assertion; the second passes. Revert the temporary sed before committing.
 
-- [ ] **Step 8: Run the other three gates**
+- [x] **Step 8: Run the other three gates**
 
 Run: `uv run --group dev ruff check . && uv run --group dev ruff format --check . && uv run --group dev ty check`
 Expected: all pass.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add icon.py tray.py main.py tests/test_main.py
@@ -343,7 +343,7 @@ git commit -m "refactor: move the tray and icon layers out of main.py"
 
 **Context you need:** after Task 3, `main.py` holds the argparse block and `main()` from `main.py` lines 725-810 at `fa55f17`, plus a growing pile of re-export imports. Two things must survive: the `if __name__ == "__main__": main()` guard at the bottom, and every name the suite imports. Nothing in `pyproject.toml` changes.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add a class at the end of `tests/test_main.py`:
 
@@ -367,21 +367,21 @@ class PublicSurfaceTests(unittest.TestCase):
 
 `subTest` so a failure names the missing name instead of stopping at the first.
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `uv run python -m unittest tests.test_main.PublicSurfaceTests -v`
 Expected: it **passes** at this point, because Tasks 1-3 already preserve the surface. That is a finding, not a formality: it means the re-export constraints in Tasks 1-3 held. Record it in the ledger and keep the test — it is the pin that stops a future change from quietly dropping a name. Do not delete it for passing early.
 
-- [ ] **Step 3: Slim `main.py`**
+- [x] **Step 3: Slim `main.py`**
 
 Delete any re-export that no module, test, or the README references. Keep the argparse block, `main()`, the guard, and the imports. `main.py` must end up importing nothing from the stdlib except `argparse`, `json` and `sys` — if any other stdlib import remains, it is one of the six the Global Constraints forbid; delete it.
 
-- [ ] **Step 4: Run the full suite to verify it passes**
+- [x] **Step 4: Run the full suite to verify it passes**
 
 Run: `uv run python -m unittest discover -s tests`
 Expected: `Ran 82 tests ... OK` (81 from Task 3, plus 1 new).
 
-- [ ] **Step 5: Verify both documented invocations by hand**
+- [x] **Step 5: Verify both documented invocations by hand**
 
 ```bash
 uv run python main.py --json
@@ -390,7 +390,7 @@ uv run strix-battery --json
 
 Expected: both print `{"status": "offline", "text": "Headset offline"}` and exit `0`. The second resolves through `[project.scripts]`, which still says `main:main` and must keep working.
 
-- [ ] **Step 6: Check the line counts**
+- [x] **Step 6: Check the line counts**
 
 ```bash
 wc -l main.py battery.py device.py icon.py tray.py
@@ -398,12 +398,12 @@ wc -l main.py battery.py device.py icon.py tray.py
 
 Expected: `main.py` well under 150 lines and the largest single module under 300. If any module is still over 300, that is a finding to report, not a reason to keep going.
 
-- [ ] **Step 7: Run the other three gates**
+- [x] **Step 7: Run the other three gates**
 
 Run: `uv run --group dev ruff check . && uv run --group dev ruff format --check . && uv run --group dev ty check`
 Expected: all pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add main.py tests/test_main.py
