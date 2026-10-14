@@ -855,7 +855,7 @@ class CliSleepTests(unittest.TestCase):
         device = device or FakeDevice()
         out, err = io.StringIO(), io.StringIO()
         with (
-            patch.object(sys, "argv", ["strix-battery"] + argv),
+            patch.object(sys, "argv", ["strix-battery", *argv]),
             patch("main.StrixDevice", return_value=device),
             contextlib.redirect_stdout(out),
             contextlib.redirect_stderr(err),
@@ -895,6 +895,77 @@ class CliSleepTests(unittest.TestCase):
         device = FakeDevice()
         self.run_main(["--set-sleep", "45"], device)
         self.assertEqual(device.sleep_calls, [45])
+
+
+class ExitCodeContractTests(unittest.TestCase):
+    """A panel script must not see two different verdicts for one headset."""
+
+    def run_main(self, argv, query_result):
+        device = FakeDevice()
+        device.query_result = query_result
+        out = io.StringIO()
+        with (
+            patch.object(sys, "argv", ["strix-battery", *argv]),
+            patch("main.StrixDevice", return_value=device),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            try:
+                main.main()
+                code = 0
+            except SystemExit as exc:
+                code = exc.code
+        return code, out.getvalue()
+
+    ONLINE: ClassVar[dict] = {
+        "percentage": 72,
+        "voltage": 3904,
+        "charging": True,
+        "sleep_min": 30,
+        "path": "/dev/hidraw3",
+    }
+
+    def test_both_modes_report_offline_with_the_same_exit_code(self):
+        json_code, _ = self.run_main(["--json"], None)
+        text_code, _ = self.run_main([], None)
+        self.assertEqual(
+            json_code,
+            text_code,
+            "a Waybar script keying on the exit code silently breaks when only"
+            " one of these modes changes",
+        )
+        self.assertEqual(json_code, main.EXIT_OFFLINE)
+
+    def test_both_modes_report_online_with_exit_zero(self):
+        json_code, _ = self.run_main(["--json"], self.ONLINE)
+        text_code, _ = self.run_main([], self.ONLINE)
+        self.assertEqual(json_code, 0)
+        self.assertEqual(text_code, 0)
+
+    def test_json_offline_output_is_unchanged(self):
+        _, out = self.run_main(["--json"], None)
+        self.assertEqual(
+            out,
+            json.dumps({"status": "offline", "text": "Headset offline"}) + "\n",
+        )
+
+    def test_json_online_output_is_unchanged(self):
+        _, out = self.run_main(["--json"], self.ONLINE)
+        self.assertEqual(json.loads(out)["percentage"], 72)
+        self.assertEqual(json.loads(out)["text"], "%72 (Charging)")
+        self.assertEqual(json.loads(out)["sleep_min"], 30)
+
+    def test_text_online_output_is_unchanged(self):
+        _, out = self.run_main([], self.ONLINE)
+        self.assertIn("--- ROG Strix Go 2.4 Status ---", out)
+        self.assertIn("Battery: 72% (3904 mV)", out)
+        self.assertIn("Power status: Charging", out)
+        self.assertIn("Sleep timer: 30 minutes", out)
+        self.assertIn("Device node: /dev/hidraw3", out)
+
+    def test_json_output_is_a_single_parseable_line(self):
+        _, out = self.run_main(["--json"], self.ONLINE)
+        self.assertEqual(len(out.strip().splitlines()), 1)
 
 
 class SleepDurationTests(unittest.TestCase):

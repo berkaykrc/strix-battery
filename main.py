@@ -47,6 +47,52 @@ EXIT_OFFLINE = 1
 EXIT_USAGE = 2
 
 
+def render_json_status(st) -> str:
+    """Render the single JSON line a panel script consumes.
+
+    Returned rather than printed so the exact bytes are assertable in a test.
+    """
+    if st is None:
+        return json.dumps({"status": "offline", "text": "Headset offline"})
+    charge_str = " (Charging)" if st["charging"] else ""
+    return json.dumps(
+        {
+            "status": "online",
+            "percentage": st["percentage"],
+            "voltage": st["voltage"],
+            "charging": st["charging"],
+            "sleep_min": st["sleep_min"],
+            "text": f"%{st['percentage']}{charge_str}",
+        }
+    )
+
+
+def render_text_status(st) -> str:
+    """Render the human-facing report. The offline case is an error, not a report."""
+    state = "Charging" if st["charging"] else "On battery"
+    L = chr(10)
+    return (
+        "--- ROG Strix Go 2.4 Status ---"
+        + L
+        + "Battery: "
+        + str(st["percentage"])
+        + "% ("
+        + str(st["voltage"])
+        + " mV)"
+        + L
+        + "Power status: "
+        + state
+        + L
+        + "Sleep timer: "
+        + str(st["sleep_min"])
+        + " minutes"
+        + L
+        + "Device node: "
+        + str(st["path"])
+        + L
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="ASUS ROG Strix Go 2.4 - Battery and sleep manager"
@@ -113,34 +159,16 @@ def main():
     st = device.query()
 
     if args.json:
-        if not st:
-            print(json.dumps({"status": "offline", "text": "Headset offline"}))
-        else:
-            charge_str = " (Charging)" if st["charging"] else ""
-            print(
-                json.dumps(
-                    {
-                        "status": "online",
-                        "percentage": st["percentage"],
-                        "voltage": st["voltage"],
-                        "charging": st["charging"],
-                        "sleep_min": st["sleep_min"],
-                        "text": f"%{st['percentage']}{charge_str}",
-                    }
-                )
-            )
+        print(render_json_status(st))
+        if st is None:
+            sys.exit(EXIT_OFFLINE)
         return
 
-    if not st:
+    if st is None:
         print("ROG Strix Go 2.4 receiver or headset is offline/out of range.")
-        sys.exit(1)
+        sys.exit(EXIT_OFFLINE)
 
-    state = "Charging" if st["charging"] else "On battery"
-    print("--- ROG Strix Go 2.4 Status ---")
-    print(f"Battery: {st['percentage']}% ({st['voltage']} mV)")
-    print(f"Power status: {state}")
-    print(f"Sleep timer: {st['sleep_min']} minutes")
-    print(f"Device node: {st['path']}")
+    print(render_text_status(st), end="")
 
 
 if __name__ == "__main__":
