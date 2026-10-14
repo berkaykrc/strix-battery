@@ -1354,6 +1354,7 @@ class PublicSurfaceTests(unittest.TestCase):
     def test_every_documented_name_is_still_reachable_from_main(self):
         for name in [
             "ASUS_VID",
+            "BATTERY_DISPLAY_DEADBAND_PERCENT",
             "ERROR_OFFLINE",
             "ERROR_PERMISSION",
             "HEADSET_ICON",
