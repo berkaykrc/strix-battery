@@ -13,6 +13,7 @@ from typing import ClassVar
 from unittest.mock import patch
 
 import battery
+import device
 import main
 from main import (
     ERROR_OFFLINE,
@@ -84,7 +85,7 @@ class PercentageStabilityTests(unittest.TestCase):
     def test_going_offline_clears_the_hold(self):
         device = StrixDevice()
         device.stabilize_percentage(70)
-        with patch("main.glob.glob", return_value=[]):
+        with patch("device.glob.glob", return_value=[]):
             self.assertIsNone(device.query())
         # 69 would have been held at 70 had the hold survived the disconnect.
         self.assertEqual(device.stabilize_percentage(69), 69)
@@ -120,7 +121,7 @@ class NotifyTests(unittest.TestCase):
 
     def test_notify_passes_a_timeout_to_the_subprocess(self):
         device = StrixDevice()
-        with patch("main.subprocess.run") as run:
+        with patch("device.subprocess.run") as run:
             device.notify("ROG Strix Go", "Battery critically low: 12%!")
         self.assertEqual(
             run.call_args.kwargs.get("timeout"),
@@ -131,19 +132,21 @@ class NotifyTests(unittest.TestCase):
     def test_notify_swallows_a_timed_out_notify_send(self):
         device = StrixDevice()
         with patch(
-            "main.subprocess.run",
+            "device.subprocess.run",
             side_effect=subprocess.TimeoutExpired("notify-send", 5),
         ):
             device.notify("ROG Strix Go", "Battery critically low: 12%!")
 
     def test_notify_swallows_a_missing_notify_send_binary(self):
         device = StrixDevice()
-        with patch("main.subprocess.run", side_effect=FileNotFoundError("notify-send")):
+        with patch(
+            "device.subprocess.run", side_effect=FileNotFoundError("notify-send")
+        ):
             device.notify("ROG Strix Go", "Battery critically low: 12%!")
 
     def test_notify_survives_a_failing_notify_send_exit_code(self):
         device = StrixDevice()
-        with patch("main.subprocess.run", return_value=None) as run:
+        with patch("device.subprocess.run", return_value=None) as run:
             device.notify("ROG Strix Go", "Battery critically low: 12%!")
         self.assertIs(run.call_args.kwargs.get("check"), False)
 
@@ -186,23 +189,25 @@ class LastErrorTests(unittest.TestCase):
     def test_permission_denied_on_a_hidraw_node_is_reported_as_a_permission_error(self):
         device = StrixDevice()
         with (
-            patch("main.glob.glob", return_value=["/dev/hidraw0"]),
-            patch("main.os.open", side_effect=PermissionError(13, "Permission denied")),
+            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch(
+                "device.os.open", side_effect=PermissionError(13, "Permission denied")
+            ),
         ):
             self.assertIsNone(device.query())
         self.assertEqual(device.last_error, ERROR_PERMISSION)
 
     def test_a_vanished_receiver_is_reported_as_offline(self):
         device = StrixDevice()
-        with patch("main.glob.glob", return_value=[]):
+        with patch("device.glob.glob", return_value=[]):
             self.assertIsNone(device.query())
         self.assertEqual(device.last_error, ERROR_OFFLINE)
 
     def test_a_non_permission_open_failure_is_still_reported_as_offline(self):
         device = StrixDevice()
         with (
-            patch("main.glob.glob", return_value=["/dev/hidraw0"]),
-            patch("main.os.open", side_effect=OSError(19, "No such device")),
+            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("device.os.open", side_effect=OSError(19, "No such device")),
         ):
             self.assertIsNone(device.query())
         self.assertEqual(device.last_error, ERROR_OFFLINE)
@@ -210,18 +215,20 @@ class LastErrorTests(unittest.TestCase):
     def test_a_successful_query_clears_a_stale_permission_error(self):
         device = StrixDevice()
         with (
-            patch("main.glob.glob", return_value=["/dev/hidraw0"]),
-            patch("main.os.open", side_effect=PermissionError(13, "Permission denied")),
+            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch(
+                "device.os.open", side_effect=PermissionError(13, "Permission denied")
+            ),
         ):
             device.query()
         self.assertEqual(device.last_error, ERROR_PERMISSION)
 
         with (
-            patch("main.glob.glob", return_value=["/dev/hidraw0"]),
-            patch("main.os.open", return_value=7),
-            patch("main.fcntl.ioctl", side_effect=asus_ioctl()),
-            patch("main.time.sleep"),
-            patch("main.os.close"),
+            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("device.os.open", return_value=7),
+            patch("device.fcntl.ioctl", side_effect=asus_ioctl()),
+            patch("device.time.sleep"),
+            patch("device.os.close"),
         ):
             self.assertIsNotNone(device.query())
         self.assertIsNone(device.last_error)
@@ -229,11 +236,11 @@ class LastErrorTests(unittest.TestCase):
     def test_a_denied_node_does_not_hide_the_real_receiver(self):
         device = StrixDevice()
         with (
-            patch("main.glob.glob", return_value=["/dev/hidraw0", "/dev/hidraw1"]),
-            patch("main.os.open", side_effect=deny_first_node),
-            patch("main.os.close"),
-            patch("main.fcntl.ioctl", side_effect=asus_ioctl()),
-            patch("main.time.sleep"),
+            patch("device.glob.glob", return_value=["/dev/hidraw0", "/dev/hidraw1"]),
+            patch("device.os.open", side_effect=deny_first_node),
+            patch("device.os.close"),
+            patch("device.fcntl.ioctl", side_effect=asus_ioctl()),
+            patch("device.time.sleep"),
         ):
             _fd, path = device.find_node()
         self.assertEqual(path, "/dev/hidraw1")
@@ -271,8 +278,10 @@ class PermissionHintTests(unittest.TestCase):
     def test_denied_nodes_plus_a_missing_dongle_still_reads_as_offline_first(self):
         device = StrixDevice()
         with (
-            patch("main.glob.glob", return_value=["/dev/hidraw0", "/dev/hidraw1"]),
-            patch("main.os.open", side_effect=PermissionError(13, "Permission denied")),
+            patch("device.glob.glob", return_value=["/dev/hidraw0", "/dev/hidraw1"]),
+            patch(
+                "device.os.open", side_effect=PermissionError(13, "Permission denied")
+            ),
         ):
             self.assertIsNone(device.query())
         self.assertEqual(device.last_error, ERROR_PERMISSION)
@@ -773,6 +782,32 @@ class QtHiddenTrayPollTests(unittest.TestCase):
         query.assert_called_once()
 
 
+class DeviceLayerTests(unittest.TestCase):
+    """The HID layer must be reachable only through `device`."""
+
+    def test_the_device_layer_lives_in_the_device_module(self):
+        self.assertIs(main.StrixDevice, device.StrixDevice)
+        self.assertIs(main.offline_message, device.offline_message)
+        self.assertIs(
+            main.noise_reduction_state_path, device.noise_reduction_state_path
+        )
+
+    def test_a_patched_state_path_is_actually_reached_by_the_constructor(self):
+        # The one patch whose failure is invisible: if this patch does not
+        # bite, StrixDevice reads the REAL ~/.config path and the suite still
+        # goes green - it just writes to the developer's home directory.
+        reached = []
+
+        def fake_path():
+            reached.append(1)
+            raise OSError("no state file for this test")
+
+        with patch("device.noise_reduction_state_path", side_effect=fake_path):
+            main.StrixDevice()
+
+        self.assertEqual(len(reached), 1, "the state path was never called")
+
+
 class SleepDurationTests(unittest.TestCase):
     def test_accepts_values_that_fit_the_hid_field(self):
         self.assertEqual(validate_sleep_minutes(0), 0)
@@ -999,14 +1034,14 @@ class NoiseReductionPacketTests(unittest.TestCase):
         # real file under ~/.config.
         with (
             tempfile.TemporaryDirectory() as d,
-            patch("main.glob.glob", return_value=["/dev/hidraw0"]),
-            patch("main.os.open", return_value=7),
-            patch("main.fcntl.ioctl", side_effect=_ioctl),
-            patch("main.time.sleep"),
-            patch("main.os.close"),
+            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("device.os.open", return_value=7),
+            patch("device.fcntl.ioctl", side_effect=_ioctl),
+            patch("device.time.sleep"),
+            patch("device.os.close"),
             patch.object(device, "notify"),
             patch(
-                "main.noise_reduction_state_path",
+                "device.noise_reduction_state_path",
                 return_value=pathlib.Path(d) / "noise-reduction.json",
             ),
         ):
@@ -1051,7 +1086,7 @@ class NoiseReductionBehaviourTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         patcher = patch(
-            "main.noise_reduction_state_path",
+            "device.noise_reduction_state_path",
             return_value=pathlib.Path(tmp.name) / "noise-reduction.json",
         )
         patcher.start()
@@ -1060,11 +1095,11 @@ class NoiseReductionBehaviourTests(unittest.TestCase):
     def test_the_new_state_is_recorded_on_the_device(self):
         device = StrixDevice()
         with (
-            patch("main.glob.glob", return_value=["/dev/hidraw0"]),
-            patch("main.os.open", return_value=7),
-            patch("main.fcntl.ioctl", side_effect=asus_ioctl()),
-            patch("main.time.sleep"),
-            patch("main.os.close"),
+            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("device.os.open", return_value=7),
+            patch("device.fcntl.ioctl", side_effect=asus_ioctl()),
+            patch("device.time.sleep"),
+            patch("device.os.close"),
             patch.object(device, "notify"),
         ):
             device.set_noise_reduction(True)
@@ -1075,15 +1110,17 @@ class NoiseReductionBehaviourTests(unittest.TestCase):
 
     def test_a_missing_receiver_fails_without_claiming_a_state_change(self):
         device = StrixDevice()
-        with patch("main.glob.glob", return_value=[]):
+        with patch("device.glob.glob", return_value=[]):
             self.assertFalse(device.set_noise_reduction(True))
         self.assertFalse(device.noise_reduction)
 
     def test_a_denied_node_fails_without_claiming_a_state_change(self):
         device = StrixDevice()
         with (
-            patch("main.glob.glob", return_value=["/dev/hidraw0"]),
-            patch("main.os.open", side_effect=PermissionError(13, "Permission denied")),
+            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch(
+                "device.os.open", side_effect=PermissionError(13, "Permission denied")
+            ),
         ):
             self.assertFalse(device.set_noise_reduction(True))
         self.assertFalse(device.noise_reduction)
@@ -1091,10 +1128,10 @@ class NoiseReductionBehaviourTests(unittest.TestCase):
     def test_an_ioctl_failure_fails_without_claiming_a_state_change(self):
         device = StrixDevice()
         with (
-            patch("main.glob.glob", return_value=["/dev/hidraw0"]),
-            patch("main.os.open", return_value=7),
-            patch("main.fcntl.ioctl", side_effect=OSError(19, "No such device")),
-            patch("main.os.close"),
+            patch("device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("device.os.open", return_value=7),
+            patch("device.fcntl.ioctl", side_effect=OSError(19, "No such device")),
+            patch("device.os.close"),
         ):
             self.assertFalse(device.set_noise_reduction(True))
         self.assertFalse(device.noise_reduction)
@@ -1116,7 +1153,7 @@ class NoiseReductionStateFileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             tmp = pathlib.Path(d)
             path = self.write_state(tmp, json.dumps({"noise_reduction": True}))
-            with patch("main.noise_reduction_state_path", return_value=path):
+            with patch("device.noise_reduction_state_path", return_value=path):
                 device = StrixDevice()
                 device.load_noise_reduction_state()
             self.assertTrue(device.noise_reduction)
@@ -1125,7 +1162,7 @@ class NoiseReductionStateFileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             tmp = pathlib.Path(d)
             with patch(
-                "main.noise_reduction_state_path", return_value=tmp / "absent.json"
+                "device.noise_reduction_state_path", return_value=tmp / "absent.json"
             ):
                 device = StrixDevice()
                 device.load_noise_reduction_state()
@@ -1135,7 +1172,7 @@ class NoiseReductionStateFileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             tmp = pathlib.Path(d)
             path = self.write_state(tmp, "{not json at all")
-            with patch("main.noise_reduction_state_path", return_value=path):
+            with patch("device.noise_reduction_state_path", return_value=path):
                 device = StrixDevice()
                 device.load_noise_reduction_state()
             self.assertFalse(device.noise_reduction)
@@ -1144,7 +1181,7 @@ class NoiseReductionStateFileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             tmp = pathlib.Path(d)
             path = self.write_state(tmp, json.dumps({"noise_reduction": "yes"}))
-            with patch("main.noise_reduction_state_path", return_value=path):
+            with patch("device.noise_reduction_state_path", return_value=path):
                 device = StrixDevice()
                 device.load_noise_reduction_state()
             self.assertFalse(device.noise_reduction)
@@ -1155,13 +1192,13 @@ class NoiseReductionStateFileTests(unittest.TestCase):
             path = tmp / "noise_reduction.json"
             device = StrixDevice()
             with (
-                patch("main.glob.glob", return_value=["/dev/hidraw0"]),
-                patch("main.os.open", return_value=7),
-                patch("main.fcntl.ioctl", side_effect=asus_ioctl()),
-                patch("main.time.sleep"),
-                patch("main.os.close"),
+                patch("device.glob.glob", return_value=["/dev/hidraw0"]),
+                patch("device.os.open", return_value=7),
+                patch("device.fcntl.ioctl", side_effect=asus_ioctl()),
+                patch("device.time.sleep"),
+                patch("device.os.close"),
                 patch.object(device, "notify"),
-                patch("main.noise_reduction_state_path", return_value=path),
+                patch("device.noise_reduction_state_path", return_value=path),
             ):
                 device.set_noise_reduction(True)
             self.assertEqual(json.loads(path.read_text()), {"noise_reduction": True})
@@ -1171,7 +1208,7 @@ class NoiseReductionStateFileTests(unittest.TestCase):
             tmp = pathlib.Path(d)
             path = tmp / "noise_reduction.json"
             device = StrixDevice()
-            with patch("main.glob.glob", return_value=[]):
+            with patch("device.glob.glob", return_value=[]):
                 device.set_noise_reduction(True)
             self.assertFalse(path.exists())
 
@@ -1244,7 +1281,7 @@ class QtNoiseReductionMenuTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         patcher = patch(
-            "main.noise_reduction_state_path",
+            "device.noise_reduction_state_path",
             return_value=pathlib.Path(tmp.name) / "noise-reduction.json",
         )
         patcher.start()

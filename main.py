@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
 import argparse
-import contextlib
-import fcntl
-import glob
 import json
 import os
-import pathlib
 import signal
-import struct
-import subprocess
 import sys
-import time
 
 from battery import (  # noqa: F401  - re-exported; `main` is the documented entry point
     DEFAULT_DISCHARGE_CURVE,
@@ -19,337 +12,26 @@ from battery import (  # noqa: F401  - re-exported; `main` is the documented ent
     mv_to_percent,
     parse_discharge_curve,
 )
-
-# Linux hidraw ioctl codes (64-byte payload)
-HIDIOCGRAWINFO = 0x80084803
-HIDIOCSFEATURE_64 = 0xC0404806
-HIDIOCGFEATURE_64 = 0xC0404807
-
-ASUS_VID = 0x0B05
-STRIX_PIDS = [0x18D6, 0x18D7]  # 0x18D6: wireless dongle, 0x18D7: wired mode
-MAX_SLEEP_MINUTES = 1092
-
-# Why the last query produced no status. Distinguishing these lets the tray
-# tell the user to fix their udev rules instead of blaming the headset.
-ERROR_OFFLINE = "offline"
-ERROR_PERMISSION = "permission"
+from device import (  # noqa: F401  - re-exported; `main` is the documented entry point
+    BATTERY_DISPLAY_DEADBAND_PERCENT,
+    ERROR_OFFLINE,
+    ERROR_PERMISSION,
+    HIDIOCGFEATURE_64,
+    HIDIOCGRAWINFO,
+    HIDIOCSFEATURE_64,
+    MAX_SLEEP_MINUTES,
+    NOTIFY_TIMEOUT_SECONDS,
+    STRIX_PIDS,
+    StrixDevice,
+    noise_reduction_state_path,
+    offline_message,
+    validate_sleep_minutes,
+)
 
 # Tray glyphs as ASCII escapes so the source stays copy-pasteable and greppable.
 HEADSET_ICON = "\U0001f3a7"
 SLEEP_ICON = "\u23f1\ufe0f"
 NOISE_REDUCTION_ICON = "\U0001f507"
-
-# `notify-send` runs on the Qt/GLib main thread, so a hung notification daemon
-# would freeze the event loop with no way out. Bound the wait.
-NOTIFY_TIMEOUT_SECONDS = 3
-
-# Voltage readings wobble by a few millivolts between polls and `mv_to_percent`
-# is a step function, so reporting the raw value makes the tray icon flicker.
-# Only report a new percentage once it has genuinely moved. Raising this to 3
-# calms the icon further at the cost of coarser steps.
-BATTERY_DISPLAY_DEADBAND_PERCENT = 2
-
-# Notify at 15% or below, but only re-arm for a fresh alert above 20%, so a
-# battery resting in between does not notify on every poll.
-LOW_BATTERY_NOTIFY_PERCENT = 15
-LOW_BATTERY_REARM_PERCENT = 20
-
-QUERY_PACKET = bytearray(
-    [0xFF, 0x08, 0x00, 0xFD, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x01] + [0x00] * 54
-)
-
-# Mic noise reduction, from the packet G-Helper 0.286 sends for this headset:
-# FF 08 00 FF 04 12 F1 03 52 <0C off | 0D on>. Byte 9 is the only field that
-# changes between the two states, so keep the mapping in one place rather than
-# branching at the call site. Both values confirmed by live listening test:
-# on removes background noise, off brings it back.
-NOISE_REDUCTION_SUB_COMMAND = {False: 0x0C, True: 0x0D}
-
-
-# The firmware will not report the current noise-reduction state, so the last
-# value we sent is the only record of it. Keep it beside the other user
-# settings rather than in the working directory.
-def noise_reduction_state_path():
-    return pathlib.Path.home() / ".config" / "strix-battery" / "noise-reduction.json"
-
-
-def validate_sleep_minutes(minutes: int) -> int:
-    """Validate a duration that fits the packet's 16-bit seconds field."""
-    if not 0 <= minutes <= MAX_SLEEP_MINUTES:
-        raise ValueError(
-            f"Sleep duration must be between 0 and {MAX_SLEEP_MINUTES} minutes."
-        )
-    return minutes
-
-
-def offline_message(last_error: str | None) -> str:
-    """Explain why no headset answered, without blaming one unproven cause.
-
-    `ERROR_PERMISSION` means a hidraw node denied access *while scanning*, not
-    that this is why the headset is unreachable. Plenty of hosts own a
-    root:root 0660 hidraw node for a built-in laptop HID device, and the udev
-    rule in the README only matches 0b05:18d6/18d7, so such a node is denied
-    even on a correctly configured machine. Reporting that as the cause sends a
-    user who already installed the rule to install it again, so the permission
-    case is a hint appended to the offline diagnosis, never a replacement for it.
-    """
-    message = "Headset: Offline / Out of range"
-    if last_error == ERROR_PERMISSION:
-        message += (
-            " (a /dev/hidraw* node also denied permission -"
-            " check the udev rules in the README)"
-        )
-    return message
-
-
-class StrixDevice:
-    """Manage USB HID communication with the ROG Strix Go 2.4."""
-
-    def __init__(self):
-        self.last_status = None
-        self.notified_low = False
-        self.last_error = None
-        self._permission_denied = False
-        self._displayed_percentage = None
-        self.noise_reduction = False
-        self.load_noise_reduction_state()
-
-    def stabilize_percentage(self, percentage: int) -> int:
-        """Hold the last reported percentage until it genuinely moves.
-
-        The hold only suppresses changes smaller than the deadband. A real
-        discharge produces a much larger step and is reported immediately, so
-        this costs no accuracy while removing the flicker that plain
-        millivolt noise causes.
-        """
-        if (
-            self._displayed_percentage is None
-            or abs(percentage - self._displayed_percentage)
-            >= BATTERY_DISPLAY_DEADBAND_PERCENT
-        ):
-            self._displayed_percentage = percentage
-        return self._displayed_percentage
-
-    def _go_offline(self, error: str = ERROR_OFFLINE):
-        """Record that no headset answered and drop the display hold."""
-        self.last_status = None
-        self.last_error = error
-        self._displayed_percentage = None
-
-    def _update_low_battery_notice(self, percentage: int, charging: bool) -> bool:
-        """Notify once when critically low; return the new latch state.
-
-        Split out from `query` so the 15% trigger and the 20% re-arm point can
-        be tested without hardware, and so the latch logic is readable on its
-        own.
-        """
-        if (
-            percentage <= LOW_BATTERY_NOTIFY_PERCENT
-            and not charging
-            and not self.notified_low
-        ):
-            self.notify("ROG Strix Go 2.4", f"Battery critically low: {percentage}%!")
-            self.notified_low = True
-        elif percentage > LOW_BATTERY_REARM_PERCENT:
-            self.notified_low = False
-        return self.notified_low
-
-    def find_node(self):
-        """Find the ASUS ROG Strix Go device and return its file descriptor."""
-        permission_denied = False
-        for path in sorted(glob.glob("/dev/hidraw*")):
-            try:
-                fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
-            except PermissionError:
-                # The udev rule from the README is missing. Keep scanning: a
-                # different node may still be the receiver.
-                permission_denied = True
-                continue
-            except OSError:
-                continue
-
-            try:
-                buf = bytearray(8)
-                fcntl.ioctl(fd, HIDIOCGRAWINFO, buf)
-                _, vid, pid = struct.unpack("<Ihh", buf)
-                if (vid & 0xFFFF) == ASUS_VID and (pid & 0xFFFF) in STRIX_PIDS:
-                    # We found it, so a denied node elsewhere is irrelevant.
-                    self._permission_denied = False
-                    return fd, path
-                os.close(fd)
-            except (OSError, struct.error):
-                os.close(fd)
-                continue
-
-        self._permission_denied = permission_denied
-        return None, None
-
-    def query(self):
-        """Read the headset battery, voltage, charging, and sleep timer status."""
-        fd, path = self.find_node()
-        if fd is None:
-            self._go_offline(
-                ERROR_PERMISSION if self._permission_denied else ERROR_OFFLINE
-            )
-            return None
-
-        try:
-            fcntl.ioctl(fd, HIDIOCSFEATURE_64, QUERY_PACKET)
-            time.sleep(0.04)
-
-            buf = bytearray([0xFF] + [0x00] * 63)
-            fcntl.ioctl(fd, HIDIOCGFEATURE_64, buf)
-
-            # A powered-off or disconnected headset returns zeroed bytes.
-            if buf[1] != 0x1B:
-                self._go_offline()
-                return None
-
-            voltage_mv = (buf[12] << 8) | buf[11]
-            pct = self.stabilize_percentage(mv_to_percent(voltage_mv))
-            charging = buf[9] == 0x0A
-            sleep_sec = (buf[22] << 8) | buf[21]
-
-            status = {
-                "percentage": pct,
-                "voltage": voltage_mv,
-                "charging": charging,
-                "sleep_min": sleep_sec // 60,
-                "path": path,
-            }
-            self.last_status = status
-            self.last_error = None
-
-            self._update_low_battery_notice(pct, charging)
-
-            return status
-        except OSError:
-            self._go_offline()
-            return None
-        finally:
-            os.close(fd)
-
-    def set_sleep(self, minutes: int):
-        """Set the automatic sleep timer (0 = never turn off)."""
-        try:
-            validate_sleep_minutes(minutes)
-        except ValueError:
-            return False
-
-        fd, _ = self.find_node()
-        if fd is None:
-            return False
-
-        try:
-            seconds = minutes * 60
-            sec_lsb = seconds & 0xFF
-            sec_msb = (seconds >> 8) & 0xFF
-
-            payload = bytearray(
-                [
-                    0xFF,
-                    0x0A,
-                    0x00,
-                    0xFF,
-                    0x04,
-                    0x12,
-                    0xF1,
-                    0x05,
-                    0x52,
-                    0x0B,
-                    sec_lsb,
-                    sec_msb,
-                ]
-                + [0x00] * 52
-            )
-
-            fcntl.ioctl(fd, HIDIOCSFEATURE_64, payload)
-            self.notify("ROG Strix Go", f"Sleep timer set to {minutes} minutes.")
-            self.query()
-            return True
-        except OSError:
-            return False
-        finally:
-            os.close(fd)
-
-    def set_noise_reduction(self, enabled: bool):
-        """Toggle the microphone AI noise reduction in the headset firmware.
-
-        The firmware accepts the report even while the headset is
-        asleep, so a successful send does not confirm the headset
-        applied the setting: the state file can lead the firmware.
-        """
-        fd, _ = self.find_node()
-        if fd is None:
-            return False
-
-        try:
-            payload = bytearray(
-                [
-                    0xFF,
-                    0x08,
-                    0x00,
-                    0xFF,
-                    0x04,
-                    0x12,
-                    0xF1,
-                    0x03,
-                    0x52,
-                    NOISE_REDUCTION_SUB_COMMAND[bool(enabled)],
-                ]
-                + [0x00] * 54
-            )
-
-            fcntl.ioctl(fd, HIDIOCSFEATURE_64, payload)
-            self.noise_reduction = bool(enabled)
-            self.save_noise_reduction_state()
-            self.notify(
-                "ROG Strix Go",
-                "Microphone noise reduction on."
-                if enabled
-                else "Microphone noise reduction off.",
-            )
-            return True
-        except OSError:
-            return False
-        finally:
-            os.close(fd)
-
-    def load_noise_reduction_state(self):
-        """Restore the last noise-reduction value we sent.
-
-        Anything unexpected in the file means "off": the firmware has no reset
-        command, so refusing to start over a bad state file would be worse than
-        guessing.
-        """
-        try:
-            with noise_reduction_state_path().open(encoding="utf-8") as handle:
-                stored = json.load(handle)
-            self.noise_reduction = stored.get("noise_reduction") is True
-        except (OSError, ValueError, AttributeError):
-            self.noise_reduction = False
-
-    def save_noise_reduction_state(self):
-        """Persist the current value, creating the directory on first use."""
-        try:
-            path = noise_reduction_state_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("w", encoding="utf-8") as handle:
-                json.dump({"noise_reduction": self.noise_reduction}, handle)
-        except OSError:
-            pass
-
-    def notify(self, title: str, msg: str):
-        """Send a desktop notification through notify-send, bounded in time."""
-        # notify-send may be missing (FileNotFoundError) or its daemon hung
-        # (TimeoutExpired, a SubprocessError): either way, skip the note
-        # rather than stalling the tray.
-        with contextlib.suppress(FileNotFoundError, subprocess.SubprocessError):
-            subprocess.run(
-                ["notify-send", title, msg, "-i", "audio-headset"],
-                check=False,
-                timeout=NOTIFY_TIMEOUT_SECONDS,
-            )
 
 
 def render_tray_icon(percentage: int, charging: bool, connected: bool):
