@@ -981,6 +981,15 @@ class ExitCodeContractTests(unittest.TestCase):
             "Device node: /dev/hidraw3\n",
         )
 
+    def test_text_offline_output_is_unchanged(self):
+        # The other half of the promise: the offline text is what a shell
+        # script reads, and nothing above pinned its bytes.
+        _, out = self.run_main([], None)
+        self.assertEqual(
+            out,
+            "ROG Strix Go 2.4 receiver or headset is offline/out of range.\n",
+        )
+
     def test_json_output_is_a_single_parseable_line(self):
         _, out = self.run_main(["--json"], self.ONLINE)
         self.assertEqual(len(out.strip().splitlines()), 1)
