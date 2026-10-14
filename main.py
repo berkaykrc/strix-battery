@@ -40,6 +40,12 @@ from tray import (  # noqa: F401  - re-exported; `main` is the documented entry 
     start_tray,
 )
 
+# Process exit codes, so a panel script can tell "the headset is not there"
+# from "the program crashed". Waybar and Polybar modules key on these.
+EXIT_OK = 0
+EXIT_OFFLINE = 1
+EXIT_USAGE = 2
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -77,17 +83,18 @@ def main():
         return
 
     if args.set_sleep is not None:
+        # An out-of-range value is a caller error, not a device problem, so it
+        # gets argparse's usage-error format and exit 2. Only a value that
+        # validated but could not be delivered is a reachability failure.
         try:
             validate_sleep_minutes(args.set_sleep)
         except ValueError as exc:
             parser.error(str(exc))
 
-        success = device.set_sleep(args.set_sleep)
-        if success:
-            print(f"Sleep timer set to {args.set_sleep} minutes.")
-        else:
+        if not device.set_sleep(args.set_sleep):
             print("Error: Headset receiver could not be reached.")
-            sys.exit(1)
+            sys.exit(EXIT_OFFLINE)
+        print(f"Sleep timer set to {args.set_sleep} minutes.")
         return
 
     if args.noise_reduction is not None:

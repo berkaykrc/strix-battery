@@ -810,6 +810,93 @@ class DeviceLayerTests(unittest.TestCase):
         self.assertEqual(len(reached), 1, "the state path was never called")
 
 
+class FakeDevice:
+    """In-memory stand-in for StrixDevice used by the CLI tests."""
+
+    def __init__(self):
+        self.last_error = None
+        self.status = {
+            "percentage": 72,
+            "voltage": 3904,
+            "charging": True,
+            "sleep_min": 30,
+            "path": "/dev/hidraw3",
+        }
+        self.sleep_result = True
+        self.sleep_calls = []
+        self.query_result = self.status
+        self.query_error = None
+        self.after_query = None
+        self.query_threads = []
+        import threading
+
+        self.query_finished = threading.Event()
+
+    def set_sleep(self, minutes):
+        self.sleep_calls.append(minutes)
+        return self.sleep_result
+
+    def query(self):
+        import threading
+
+        self.query_threads.append(threading.get_ident())
+        self.query_finished.set()
+        if self.query_error is not None:
+            raise self.query_error
+        if self.after_query is not None:
+            self.after_query()
+        return self.query_result
+
+
+class CliSleepTests(unittest.TestCase):
+    """CLI sleep distinction between bad args and absent device."""
+
+    def run_main(self, argv, device=None):
+        device = device or FakeDevice()
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            patch.object(sys, "argv", ["strix-battery"] + argv),
+            patch("main.StrixDevice", return_value=device),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            try:
+                main.main()
+                code = 0
+            except SystemExit as exc:
+                code = exc.code
+        return code, out.getvalue(), err.getvalue()
+
+    def test_a_negative_duration_is_rejected_as_a_usage_error(self):
+        code, _, err = self.run_main(["--set-sleep", "-1"])
+        self.assertEqual(code, 2, "argparse usage errors exit 2")
+        self.assertIn("must be between", err)
+
+    def test_a_duration_above_the_cap_is_rejected_as_a_usage_error(self):
+        code, _, err = self.run_main(["--set-sleep", str(MAX_SLEEP_MINUTES + 1)])
+        self.assertEqual(code, 2)
+        self.assertIn("must be between", err)
+
+    def test_a_valid_duration_with_no_receiver_reports_the_receiver(self):
+        device = FakeDevice()
+        device.sleep_result = False
+        code, out, _ = self.run_main(["--set-sleep", "30"], device)
+        self.assertEqual(code, 1)
+        self.assertIn("could not be reached", out)
+
+    def test_a_successful_set_sleep_exits_zero(self):
+        device = FakeDevice()
+        device.sleep_result = True
+        code, out, _ = self.run_main(["--set-sleep", "30"], device)
+        self.assertEqual(code, 0)
+        self.assertIn("Sleep timer set to 30 minutes.", out)
+
+    def test_the_validated_minutes_reach_the_device(self):
+        device = FakeDevice()
+        self.run_main(["--set-sleep", "45"], device)
+        self.assertEqual(device.sleep_calls, [45])
+
+
 class SleepDurationTests(unittest.TestCase):
     def test_accepts_values_that_fit_the_hid_field(self):
         self.assertEqual(validate_sleep_minutes(0), 0)
