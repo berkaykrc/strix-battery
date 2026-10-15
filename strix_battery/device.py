@@ -351,7 +351,7 @@ class StrixDevice:
             with noise_reduction_state_path().open(encoding="utf-8") as handle:
                 stored = json.load(handle)
             self.noise_reduction = stored.get("noise_reduction") is True
-        except (OSError, ValueError, AttributeError):
+        except (OSError, ValueError, AttributeError, RuntimeError, KeyError):
             self.noise_reduction = False
 
     def save_noise_reduction_state(self):
@@ -363,7 +363,7 @@ class StrixDevice:
             with tmp.open("w", encoding="utf-8") as handle:
                 json.dump({"noise_reduction": self.noise_reduction}, handle)
             os.replace(tmp, path)
-        except OSError:
+        except (OSError, ValueError, AttributeError, RuntimeError, KeyError):
             pass
 
     def notify(self, title: str, msg: str):

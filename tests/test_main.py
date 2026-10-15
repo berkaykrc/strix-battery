@@ -1913,6 +1913,26 @@ class NoiseReductionStateFileTests(unittest.TestCase):
         replace.assert_called_once()
 
 
+class HomeLessStateTests(unittest.TestCase):
+    """A service or cron process has no HOME; construction must still work."""
+
+    def test_the_device_still_constructs_when_home_is_unset(self):
+        with patch(
+            "strix_battery.device.pathlib.Path.home",
+            side_effect=RuntimeError("Could not determine home directory."),
+        ):
+            device = StrixDevice()
+        self.assertFalse(device.noise_reduction)
+
+    def test_saving_without_home_does_not_raise(self):
+        device = StrixDevice()
+        with patch(
+            "strix_battery.device.pathlib.Path.home",
+            side_effect=RuntimeError("Could not determine home directory."),
+        ):
+            device.save_noise_reduction_state()
+
+
 class NoiseReductionCliTests(unittest.TestCase):
     """`--noise-reduction on|off` must behave like `--set-sleep`."""
 
