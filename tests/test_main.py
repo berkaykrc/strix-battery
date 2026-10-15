@@ -292,6 +292,62 @@ class NotifyTests(unittest.TestCase):
             device.notify("ROG Strix Go", "Battery critically low: 12%!")
         self.assertIs(run.call_args.kwargs.get("check"), False)
 
+    def test_notify_swallows_a_bare_oserror(self):
+        # EACCES on a non-executable wrapper, EAGAIN when fork hits
+        # RLIMIT_NPROC: notify-send can fail with a plain OSError that is
+        # neither FileNotFoundError nor a SubprocessError.
+        device = StrixDevice()
+        with patch(
+            "strix_battery.device.subprocess.run",
+            side_effect=PermissionError(13, "Permission denied"),
+        ):
+            device.notify("ROG Strix Go 2.4", "Battery critically low: 12%!")
+
+    def test_a_notification_oserror_does_not_escape_query(self):
+        # 3427 mV -> 14%, low enough that query() reaches the notify path.
+        def _low_battery_ioctl(fd, request, buf, *args, **kwargs):
+            if request == HIDIOCGRAWINFO:
+                buf[:8] = ASUS_DEVINFO
+            elif request == HIDIOCGFEATURE_64:
+                buf[1] = 0x1B
+                buf[11] = 0x63
+                buf[12] = 0x0D
+
+        device = StrixDevice()
+        with (
+            patch("strix_battery.device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("strix_battery.device.os.open", return_value=7),
+            patch("strix_battery.device.fcntl.ioctl", side_effect=_low_battery_ioctl),
+            patch("strix_battery.device.time.sleep"),
+            patch("strix_battery.device.os.close"),
+            patch(
+                "strix_battery.device.subprocess.run",
+                side_effect=PermissionError(13, "Permission denied"),
+            ),
+        ):
+            self.assertIsNotNone(device.query())
+
+    def test_a_notification_oserror_does_not_flip_set_sleep_to_false(self):
+        def _ioctl(fd, request, buf, *args, **kwargs):
+            if request == HIDIOCGRAWINFO:
+                buf[:8] = ASUS_DEVINFO
+            elif request == HIDIOCGFEATURE_64:
+                buf[1] = 0x1B
+
+        device = StrixDevice()
+        with (
+            patch("strix_battery.device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("strix_battery.device.os.open", return_value=7),
+            patch("strix_battery.device.fcntl.ioctl", side_effect=_ioctl),
+            patch("strix_battery.device.time.sleep"),
+            patch("strix_battery.device.os.close"),
+            patch(
+                "strix_battery.device.subprocess.run",
+                side_effect=PermissionError(13, "Permission denied"),
+            ),
+        ):
+            self.assertTrue(device.set_sleep(30))
+
 
 ASUS_DEVINFO = struct.pack("<Ihh", 5, 0x0B05, 0x18D6)
 

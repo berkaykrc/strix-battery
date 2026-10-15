@@ -369,7 +369,7 @@ class StrixDevice:
         # notify-send may be missing (FileNotFoundError) or its daemon hung
         # (TimeoutExpired, a SubprocessError): either way, skip the note
         # rather than stalling the tray.
-        with contextlib.suppress(FileNotFoundError, subprocess.SubprocessError):
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
             subprocess.run(
                 ["notify-send", title, msg, "-i", "audio-headset"],
                 check=False,
