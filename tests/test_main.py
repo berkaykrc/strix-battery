@@ -2,6 +2,7 @@ import contextlib
 import io
 import itertools
 import json
+import os
 import pathlib
 import struct
 import subprocess
@@ -175,6 +176,14 @@ class PackageLayoutTests(unittest.TestCase):
 
 class MvToPercentTests(unittest.TestCase):
     """The percentage curve is the input to every displayed battery number."""
+
+    def setUp(self):
+        # Pin the *shipped* table, not whatever STRIX_BATTERY_CURVE the
+        # developer happens to have exported. patch.dict("os.environ") with
+        # no clear=True does not remove the variable, so pop it directly.
+        saved = os.environ.pop(main.DISCHARGE_CURVE_ENV_VAR, None)
+        if saved is not None:
+            self.addCleanup(os.environ.__setitem__, main.DISCHARGE_CURVE_ENV_VAR, saved)
 
     def test_clamps_to_the_discharge_endpoints(self):
         self.assertEqual(mv_to_percent(3300), 0)
@@ -801,6 +810,14 @@ class DischargeCurveTests(unittest.TestCase):
 
     LINEAR = ((3300, 0), (4150, 100))
 
+    def setUp(self):
+        # Pin the *shipped* table, not whatever STRIX_BATTERY_CURVE the
+        # developer happens to have exported. patch.dict("os.environ") with
+        # no clear=True does not remove the variable, so pop it directly.
+        saved = os.environ.pop(main.DISCHARGE_CURVE_ENV_VAR, None)
+        if saved is not None:
+            self.addCleanup(os.environ.__setitem__, main.DISCHARGE_CURVE_ENV_VAR, saved)
+
     def test_the_discharge_curve_lives_in_the_battery_module(self):
         self.assertIs(main.mv_to_percent, battery.mv_to_percent)
         self.assertIs(main.load_discharge_curve, battery.load_discharge_curve)
@@ -811,31 +828,26 @@ class DischargeCurveTests(unittest.TestCase):
         # has drifted and every reported percentage is now unverified.
         curve = main.DEFAULT_DISCHARGE_CURVE
         self.assertEqual(curve, self.LINEAR)
-        # Clear the environment so this pins the *shipped* table rather than
-        # whatever STRIX_BATTERY_CURVE the developer happens to have exported.
-        with patch.dict("os.environ"):
-            for mv in range(3200, 4200, 7):
-                expected = (
-                    0
-                    if mv <= 3300
-                    else 100
-                    if mv >= 4150
-                    else int((mv - 3300) / (4150 - 3300) * 100)
-                )
-                self.assertEqual(main.mv_to_percent(mv), expected, f"{mv}mV moved")
+        for mv in range(3200, 4200, 7):
+            expected = (
+                0
+                if mv <= 3300
+                else 100
+                if mv >= 4150
+                else int((mv - 3300) / (4150 - 3300) * 100)
+            )
+            self.assertEqual(main.mv_to_percent(mv), expected, f"{mv}mV moved")
 
     def test_percentages_never_fall_as_voltage_falls(self):
         previous = -1
-        with patch.dict("os.environ"):
-            for mv in range(3200, 4200, 5):
-                current = main.mv_to_percent(mv)
-                self.assertGreaterEqual(current, previous, f"regressed at {mv}mV")
-                previous = current
+        for mv in range(3200, 4200, 5):
+            current = main.mv_to_percent(mv)
+            self.assertGreaterEqual(current, previous, f"regressed at {mv}mV")
+            previous = current
 
     def test_the_curve_is_ordered_by_voltage_and_clamped_at_both_ends(self):
-        with patch.dict("os.environ"):
-            self.assertEqual(main.mv_to_percent(0), 0)
-            self.assertEqual(main.mv_to_percent(65535), 100)
+        self.assertEqual(main.mv_to_percent(0), 0)
+        self.assertEqual(main.mv_to_percent(65535), 100)
 
     def test_an_exact_calibration_point_is_hit_exactly(self):
         curve = ((3300, 0), (3600, 25), (4000, 80), (4150, 100))
@@ -1248,6 +1260,14 @@ def make_reply(voltage=3904, charging=True, sleep_sec=0, marker=0x1B):
 
 class DecodeStatusTests(unittest.TestCase):
     """The decode is pure, so every field can be asserted without hardware."""
+
+    def setUp(self):
+        # Pin the *shipped* table, not whatever STRIX_BATTERY_CURVE the
+        # developer happens to have exported. patch.dict("os.environ") with
+        # no clear=True does not remove the variable, so pop it directly.
+        saved = os.environ.pop(main.DISCHARGE_CURVE_ENV_VAR, None)
+        if saved is not None:
+            self.addCleanup(os.environ.__setitem__, main.DISCHARGE_CURVE_ENV_VAR, saved)
 
     def test_decodes_a_little_endian_voltage(self):
         status = main.decode_status(make_reply(voltage=3904), "/dev/hidraw3")
