@@ -12,6 +12,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -42,6 +43,7 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -49,4 +51,10 @@ jobs:
         uses: astral-sh/setup-uv@v10.3.0
 
       - name: Run ruff
-        run: uvx ruff check .
+        run: uv run --group dev ruff check .
+
+      - name: Run ruff format check
+        run: uv run --group dev ruff format --check .
+
+      - name: Run ty
+        run: uv run --group dev ty check
