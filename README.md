@@ -65,6 +65,37 @@ uv run python main.py --json
 
 `--set-sleep 0` disables automatic shutdown. The maximum value is 1092 minutes because the HID packet uses a 16-bit seconds field.
 
+### Exit codes and JSON output
+
+The exit code is the process status, not a field in the output. A panel script
+reads `$?` after the command finishes. It is the same in text and `--json` mode:
+
+| `$?` | Meaning |
+| ---- | ------- |
+| 0    | Reported successfully |
+| 1    | Headset offline / out of range (also what an offline `--json` reports) |
+| 2    | Bad usage, e.g. a `--set-sleep` value out of range |
+
+`--json` prints exactly one line to stdout. Online:
+
+```json
+{"status": "online", "percentage": 71, "voltage": 3904, "charging": false, "sleep_min": 0, "text": "%71"}
+```
+
+Offline — there is no `percentage` key, so a panel can key on `status`:
+
+```json
+{"status": "offline", "text": "Headset offline"}
+```
+
+Example for a Waybar/Polybar custom module:
+
+```bash
+out=$(strix-battery --json); code=$?
+[ "$code" -eq 0 ] || out='{"text": "---"}'
+echo "$out"
+```
+
 ### Battery curve
 
 The shipped millivolt-to-percentage curve is the linear map and is deliberately
