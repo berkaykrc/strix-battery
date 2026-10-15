@@ -1891,6 +1891,27 @@ class NoiseReductionStateFileTests(unittest.TestCase):
                 device.set_noise_reduction(True)
             self.assertFalse(path.exists())
 
+    def test_the_save_replaces_the_file_in_one_step(self):
+        # A second process reading mid-write must never see torn JSON.
+        # os.replace is the atomic step; the plain open("w") truncated in place.
+        device = StrixDevice()
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch("strix_battery.device.os.replace") as replace,
+            patch("strix_battery.device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("strix_battery.device.os.open", return_value=7),
+            patch("strix_battery.device.fcntl.ioctl", side_effect=asus_ioctl()),
+            patch("strix_battery.device.time.sleep"),
+            patch("strix_battery.device.os.close"),
+            patch.object(device, "notify"),
+            patch(
+                "strix_battery.device.noise_reduction_state_path",
+                return_value=pathlib.Path(d) / "noise-reduction.json",
+            ),
+        ):
+            device.set_noise_reduction(True)
+        replace.assert_called_once()
+
 
 class NoiseReductionCliTests(unittest.TestCase):
     """`--noise-reduction on|off` must behave like `--set-sleep`."""

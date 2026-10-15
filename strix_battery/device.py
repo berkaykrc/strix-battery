@@ -359,8 +359,10 @@ class StrixDevice:
         try:
             path = noise_reduction_state_path()
             path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("w", encoding="utf-8") as handle:
+            tmp = path.with_name(path.name + ".tmp")
+            with tmp.open("w", encoding="utf-8") as handle:
                 json.dump({"noise_reduction": self.noise_reduction}, handle)
+            os.replace(tmp, path)
         except OSError:
             pass
 
