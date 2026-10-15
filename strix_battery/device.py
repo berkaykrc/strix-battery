@@ -359,7 +359,7 @@ class StrixDevice:
         try:
             path = noise_reduction_state_path()
             path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_name(path.name + ".tmp")
+            tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
             with tmp.open("w", encoding="utf-8") as handle:
                 json.dump({"noise_reduction": self.noise_reduction}, handle)
             os.replace(tmp, path)
@@ -370,7 +370,8 @@ class StrixDevice:
         """Send a desktop notification through notify-send, bounded in time."""
         # notify-send may be missing (FileNotFoundError) or its daemon hung
         # (TimeoutExpired, a SubprocessError): either way, skip the note
-        # rather than stalling the tray.
+        # rather than stalling the tray. A bare OSError is also swallowed:
+        # EACCES on a non-executable wrapper or EAGAIN on fork failure.
         with contextlib.suppress(OSError, subprocess.SubprocessError):
             subprocess.run(
                 ["notify-send", title, msg, "-i", "audio-headset"],

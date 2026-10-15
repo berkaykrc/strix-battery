@@ -269,6 +269,14 @@ class PercentageStabilityTests(unittest.TestCase):
 class NotifyTests(unittest.TestCase):
     """`notify()` runs on the GUI main thread, so it must never block forever."""
 
+    def setUp(self):
+        # Pin the *shipped* table, not whatever STRIX_BATTERY_CURVE the
+        # developer happens to have exported. patch.dict("os.environ") with
+        # no clear=True does not remove the variable, so pop it directly.
+        saved = os.environ.pop(main.DISCHARGE_CURVE_ENV_VAR, None)
+        if saved is not None:
+            self.addCleanup(os.environ.__setitem__, main.DISCHARGE_CURVE_ENV_VAR, saved)
+
     def test_notify_passes_a_timeout_to_the_subprocess(self):
         device = StrixDevice()
         with patch("strix_battery.device.subprocess.run") as run:
