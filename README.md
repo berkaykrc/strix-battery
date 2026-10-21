@@ -96,11 +96,13 @@ out=$(strix-battery --json); code=$?
 echo "$out"
 ```
 
-### Battery curve
+### Battery percentage
 
-The shipped millivolt-to-percentage curve is the linear map and is deliberately
-uncalibrated. If you have measured your own cell, override it with ascending
-`mV:percent` pairs:
+The headset reports its battery as a millivolt value. The displayed percentage
+follows Armoury Crate's quarter steps (100 / 75 / 50 / 25 / 10), so the
+number matches what Armoury Crate shows. The `STRIX_BATTERY_CURVE` override
+still applies to the underlying millivolt-to-percentage helper used by tests
+and tooling:
 
 ```bash
 export STRIX_BATTERY_CURVE="3300:0,3600:25,4000:80,4150:100"

@@ -2110,3 +2110,54 @@ class PublicSurfaceTests(unittest.TestCase):
         ]:
             with self.subTest(name=name):
                 self.assertTrue(hasattr(main, name), f"main lost {name}")
+
+
+class HeadsetLevelTests(unittest.TestCase):
+    """Armoury Crate's quarter steps, from HaloBattery PR #296."""
+
+    def test_measured_frames_map_to_the_expected_steps(self):
+        self.assertEqual(main.headset_level_from_voltage(3743), 50)
+        self.assertEqual(main.headset_level_from_voltage(3831), 75)
+        self.assertEqual(main.headset_level_from_voltage(3897), 75)
+        self.assertEqual(main.headset_level_from_voltage(4077), 75)
+
+    def test_low_voltage_reports_the_critical_step(self):
+        self.assertEqual(main.headset_level_from_voltage(3400), 10)
+
+    def test_high_voltage_clamps_to_full(self):
+        self.assertEqual(main.headset_level_from_voltage(0xFFFF), 100)
+
+    def test_byte_thirteen_is_not_the_level(self):
+        # Byte 13 stays 0x40 (64) while the voltage varies; the level must
+        # follow the voltage, never the constant byte.
+        self.assertNotEqual(main.headset_level_from_voltage(3904), 64)
+
+
+class WiredChargingTests(unittest.TestCase):
+    """The USB-C cable (PID 0x18D7) always charges."""
+
+    def test_wired_mode_reports_charging_even_off_byte(self):
+        device = StrixDevice()
+        wired_devinfo = struct.pack("<Ihh", 5, 0x0B05, 0x18D7)
+
+        def _ioctl(fd, request, buf, *args, **kwargs):
+            if request == HIDIOCGRAWINFO:
+                buf[:8] = wired_devinfo
+            elif request == HIDIOCGFEATURE_64:
+                buf[1] = 0x1B
+                buf[9] = 0x03  # on battery byte
+                buf[11] = 0x40
+                buf[12] = 0x0F
+                buf[21] = 0x00
+                buf[22] = 0x00
+
+        with (
+            patch("strix_battery.device.glob.glob", return_value=["/dev/hidraw0"]),
+            patch("strix_battery.device.os.open", return_value=7),
+            patch("strix_battery.device.fcntl.ioctl", side_effect=_ioctl),
+            patch("strix_battery.device.time.sleep"),
+            patch("strix_battery.device.os.close"),
+        ):
+            status = device.query()
+        self.assertIsNotNone(status)
+        self.assertTrue(status["charging"])

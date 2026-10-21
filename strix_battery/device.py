@@ -8,8 +8,6 @@ import struct
 import subprocess
 import time
 
-from .battery import mv_to_percent
-
 # Linux hidraw ioctl codes (64-byte payload)
 HIDIOCGRAWINFO = 0x80084803
 HIDIOCSFEATURE_64 = 0xC0404806
@@ -53,8 +51,35 @@ QUERY_PACKET = bytes(
 REPLY_MARKER = 0x1B
 OFFSET_CHARGING = 9
 CHARGING_FLAG = 0x0A
+
+# Armoury Crate quarter steps for the ROG Strix Go 2.4. The headset reports
+# its battery as a 16-bit millivolt value (bytes 11-12); Armoury Crate turns
+# that into one of these steps rather than a smooth percentage. Byte 13 is a
+# constant 0x40 and must not be used. See HaloBattery PR #296 / G-Helper #6067.
+HEADSET_LEVEL_STEPS = (
+    (0x10, 4100, 100),
+    (0x0F, 3800, 75),
+    (None, 3700, 50),
+    (0x0E, 3500, 25),
+)
+HEADSET_LEVEL_LOW = 10
+
+
 OFFSET_VOLUME_LSB = 11
 OFFSET_VOLUME_MSB = 12
+
+# Protocol constants from HaloBattery PR #296 (G-Helper #6067).
+HEADSET_REPORT_ID = 0xFF
+HEADSET_PACKET_LENGTH = 64
+HEADSET_REQUEST = bytes([0xFF, 0x08, 0x00, 0xFD, 0x04, 0x12, 0xF1, 0x03, 0x52, 0x01])
+HEADSET_SLEEP_SECONDS = 0.035
+HEADSET_ATTEMPTS = 3
+HEADSET_ERROR = (0xFF, 0xAA)
+HEADSET_HEADER = REPLY_MARKER
+HEADSET_CHARGING_BYTE = OFFSET_CHARGING
+HEADSET_CHARGING_VALUE = CHARGING_FLAG
+HEADSET_VOLTAGE_LSB = OFFSET_VOLUME_LSB
+HEADSET_VOLTAGE_MSB = OFFSET_VOLUME_MSB
 OFFSET_SLEEP_LSB = 21
 OFFSET_SLEEP_MSB = 22
 
@@ -133,6 +158,21 @@ def offline_message(last_error: str | None) -> str:
     return message
 
 
+def headset_level_from_voltage(mv: int) -> int:
+    """Map a headset battery voltage to Armoury Crate's quarter step.
+
+    The headset reports millivolts, not a percentage. Armoury Crate rounds to
+    25/50/75/100 (and 10 below the lowest step), keyed on the MSB with a
+    millivolt floor as the guard. Keeping this separate from ``mv_to_percent``
+    leaves the user's calibrated discharge curve untouched.
+    """
+    msb = (mv >> 8) & 0xFF
+    for nibble, ceil_mv, level in HEADSET_LEVEL_STEPS:
+        if (nibble is not None and msb >= nibble) or mv >= ceil_mv:
+            return level
+    return HEADSET_LEVEL_LOW
+
+
 def decode_status(buf, path):
     """Turn a raw 64-byte status reply into a status dict, or None.
 
@@ -151,7 +191,7 @@ def decode_status(buf, path):
 
     voltage_mv = (buf[OFFSET_VOLUME_MSB] << 8) | buf[OFFSET_VOLUME_LSB]
     return {
-        "percentage": mv_to_percent(voltage_mv),
+        "percentage": headset_level_from_voltage(voltage_mv),
         "voltage": voltage_mv,
         "charging": buf[OFFSET_CHARGING] == CHARGING_FLAG,
         "sleep_min": ((buf[OFFSET_SLEEP_MSB] << 8) | buf[OFFSET_SLEEP_LSB]) // 60,
@@ -168,6 +208,7 @@ class StrixDevice:
         self.last_error = None
         self._permission_denied = False
         self._displayed_percentage = None
+        self._last_pid = None
         self.noise_reduction = False
         self.load_noise_reduction_state()
 
@@ -214,6 +255,7 @@ class StrixDevice:
     def find_node(self):
         """Find the ASUS ROG Strix Go device and return its file descriptor."""
         permission_denied = False
+        self._last_pid = None
         for path in sorted(glob.glob("/dev/hidraw*")):
             try:
                 fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
@@ -232,6 +274,7 @@ class StrixDevice:
                 if (vid & 0xFFFF) == ASUS_VID and (pid & 0xFFFF) in STRIX_PIDS:
                     # We found it, so a denied node elsewhere is irrelevant.
                     self._permission_denied = False
+                    self._last_pid = pid & 0xFFFF
                     return fd, path
                 os.close(fd)
             except (OSError, struct.error):
@@ -251,16 +294,26 @@ class StrixDevice:
             return None
 
         try:
-            fcntl.ioctl(fd, HIDIOCSFEATURE_64, QUERY_PACKET)
-            time.sleep(0.04)
+            status = None
+            for _ in range(HEADSET_ATTEMPTS):
+                fcntl.ioctl(fd, HIDIOCSFEATURE_64, QUERY_PACKET)
+                time.sleep(HEADSET_SLEEP_SECONDS)
 
-            buf = bytearray([0xFF] + [0x00] * 63)
-            fcntl.ioctl(fd, HIDIOCGFEATURE_64, buf)
+                buf = bytearray([0xFF] + [0x00] * 63)
+                try:
+                    fcntl.ioctl(fd, HIDIOCGFEATURE_64, buf)
+                except OSError:
+                    continue
+                status = decode_status(buf, path)
+                if status is not None:
+                    break
 
-            status = decode_status(buf, path)
             if status is None:
                 self._go_offline()
                 return None
+
+            if self._last_pid == 0x18D7:
+                status["charging"] = True
 
             status["percentage"] = self.stabilize_percentage(status["percentage"])
 
