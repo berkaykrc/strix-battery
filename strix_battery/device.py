@@ -78,6 +78,13 @@ HEADSET_ERROR = (0xFF, 0xAA)
 HEADSET_HEADER = REPLY_MARKER
 HEADSET_CHARGING_BYTE = OFFSET_CHARGING
 HEADSET_CHARGING_VALUE = CHARGING_FLAG
+# While charging, the charger lifts the pack voltage by ~160 mV (reporter's
+# own pairs: 3743 -> 3897 mV, 3665 -> 3828 mV). Below the CV plateau
+# (4100 mV) the lift is removed before the step table so plugging the cable
+# does not jump the level up a step; at/above it the pack is full and the
+# raw value is used. HaloBattery commit d70fc0f (#190).
+HEADSET_CHARGING_LIFT_MV = 160
+HEADSET_CHARGING_FULL_MV = 4100
 HEADSET_VOLTAGE_LSB = OFFSET_VOLUME_LSB
 HEADSET_VOLTAGE_MSB = OFFSET_VOLUME_MSB
 OFFSET_SLEEP_LSB = 21
@@ -158,14 +165,21 @@ def offline_message(last_error: str | None) -> str:
     return message
 
 
-def headset_level_from_voltage(mv: int) -> int:
+def headset_level_from_voltage(mv: int, charging: bool = False) -> int:
     """Map a headset battery voltage to Armoury Crate's quarter step.
 
     The headset reports millivolts, not a percentage. Armoury Crate rounds to
     25/50/75/100 (and 10 below the lowest step), keyed on the MSB with a
     millivolt floor as the guard. Keeping this separate from ``mv_to_percent``
     leaves the user's calibrated discharge curve untouched.
+
+    While charging, the charger lifts the pack by about 160 mV below the CV
+    plateau (4100 mV); remove that lift first so plugging the cable does not
+    jump the level up a step. At or above the plateau the pack is full and the
+    raw value is used.
     """
+    if charging and mv < HEADSET_CHARGING_FULL_MV:
+        mv = max(0, mv - HEADSET_CHARGING_LIFT_MV)
     msb = (mv >> 8) & 0xFF
     for nibble, ceil_mv, level in HEADSET_LEVEL_STEPS:
         if (nibble is not None and msb >= nibble) or mv >= ceil_mv:
@@ -190,10 +204,11 @@ def decode_status(buf, path):
         return None
 
     voltage_mv = (buf[OFFSET_VOLUME_MSB] << 8) | buf[OFFSET_VOLUME_LSB]
+    charging = buf[OFFSET_CHARGING] == CHARGING_FLAG
     return {
-        "percentage": headset_level_from_voltage(voltage_mv),
+        "percentage": headset_level_from_voltage(voltage_mv, charging=charging),
         "voltage": voltage_mv,
-        "charging": buf[OFFSET_CHARGING] == CHARGING_FLAG,
+        "charging": charging,
         "sleep_min": ((buf[OFFSET_SLEEP_MSB] << 8) | buf[OFFSET_SLEEP_LSB]) // 60,
         "path": path,
     }
@@ -314,6 +329,9 @@ class StrixDevice:
 
             if self._last_pid == 0x18D7:
                 status["charging"] = True
+                status["percentage"] = headset_level_from_voltage(
+                    status["voltage"], charging=True
+                )
 
             status["percentage"] = self.stabilize_percentage(status["percentage"])
 

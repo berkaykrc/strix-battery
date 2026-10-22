@@ -2161,3 +2161,25 @@ class WiredChargingTests(unittest.TestCase):
             status = device.query()
         self.assertIsNotNone(status)
         self.assertTrue(status["charging"])
+
+
+class ChargingLiftTests(unittest.TestCase):
+    """While charging, the charger's ~160 mV lift is removed (HaloBattery d70fc0f)."""
+
+    def test_on_battery_frames_keep_their_step(self):
+        self.assertEqual(main.headset_level_from_voltage(3665), 25)
+        self.assertEqual(main.headset_level_from_voltage(3743), 50)
+
+    def test_charging_frames_remove_the_lift(self):
+        # 3828 mV charging -> 3668 mV after the lift -> 25 %
+        self.assertEqual(main.headset_level_from_voltage(3828, charging=True), 25)
+        # 3897 mV charging -> 3737 mV after the lift -> 50 %
+        self.assertEqual(main.headset_level_from_voltage(3897, charging=True), 50)
+
+    def test_the_cv_plateau_keeps_the_raw_value(self):
+        # At/above 4100 mV the pack is full: no lift removed.
+        self.assertEqual(main.headset_level_from_voltage(4150, charging=True), 100)
+
+    def test_lift_does_not_apply_on_battery(self):
+        # Same voltage, no charging: the raw value is used.
+        self.assertEqual(main.headset_level_from_voltage(3828, charging=False), 75)
